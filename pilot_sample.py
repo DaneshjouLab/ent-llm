@@ -2,6 +2,7 @@ def extract_sample(project_ID, dataset_ID, table_names, n_patients):
     """Extract a sample for testing."""
     from google.cloud import bigquery
     import pandas as pd
+    
     client = bigquery.Client(project=project_ID)
     patient_identifier = 'patient_id'
     sample_data = {}
