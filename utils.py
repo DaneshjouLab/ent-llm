@@ -1,5 +1,66 @@
 # Helper functions for processing patient data
 
+# Data Extraction
+def extract_ent_notes(notes_list):
+    """
+    Extract relevant ENT notes from a list of clinical_note dicts,
+    based on important type/title values and ENT-related authors/text.
+    """
+    if not isinstance(notes_list, list):
+        return ""
+
+    important_types = {
+        'Other Note', 'Other', 'Progress Note, Outpatient','Operative/Procedure Report', 'Consultation Note',
+        'History and Physical', 'Progress Note, Inpatient', 'Progress/Discharge/Transfer Summary', 'Discharge/Transfer Summary'
+    }
+
+    important_titles = {
+        'Procedure Note', 'Health Plan Operations CM Note', 'Airway', 'OUTSIDE RECORDS', 'PROC CT SCAN INFORMATION', 'Operative Note',
+        'Consult Follow-Up', 'Interval H&P Note', 'Unmapped External Note', 'OUTSD CLINIC VISITS/CONSULTS/NOTES', 'Surgical Procedure',
+        'Tertiary Survey', 'Admission H&P', 'H&P Interval', 'LARYNGOSCOPY ENT','Pre-Op H&P', 'SHC CT RESULT', 'H&P Preop', 'Procedures',
+        'IN CLINIC VNA - CT - MAXILLOFACIAL AREA', 'ORD CONSULT REQUEST', 'IMAGE ONLY - ENT ENDOSCOPY', 'Care Plan Note', 'Clinic Support Note',
+        'Clinic Visit', 'Consults', 'H&P', 'NASAL ENDOSCOPY ENT', 'Operative Report', 'Procedures', 'Progress Notes', 'Sign Out Note'
+    }
+
+    relevant_notes = []
+
+    for note in notes_list:
+        note_type = note.get('type', '')
+        note_title = note.get('title', '')
+        author = note.get('author', '')
+        text = note.get('text', '')
+
+        if not isinstance(text, str):
+            continue
+
+        # Check if note is ENT-related and from a relevant type/title
+        ent_match = (
+            ('ent' in author.lower() or 'otolaryngology' in author.lower()) or
+            ('ent' in text.lower() or 'otolaryngology' in text.lower())
+        )
+
+        key_match = (note_type in important_types) or (note_title in important_titles)
+
+        if key_match and ent_match:
+            relevant_notes.append(text)
+
+    return "\n---\n".join(relevant_notes)
+
+def extract_radiology_report(reports_list):
+    """Extract sinus CT radiology report text."""
+    if not isinstance(reports_list, list):
+        return ""
+
+    relevant_reports = [
+        report.get('text', '')
+        for report in reports_list
+        if 'ct' in str(report.get('type', '')).lower()
+        and any(kw in str(report.get('title', '')).lower() for kw in ['sinus', 'paranasal', 'nasal'])
+    ]
+    return "\n---\n".join(filter(None, relevant_reports))
+
+# Preprocessing 
+
 def censor_surgical_plans(text):
     """Remove sentence that suggest surgical plans or recommendations."""
     import re
@@ -17,26 +78,6 @@ def censor_surgical_plans(text):
     sentences = re.split(r'(?<=[.!?])\s+', text)
     censored = [s for s in sentences if not any(kw in s for kw in censor_keywords)]
     return " ".join(censored)
-
-def extract_ent_notes(notes_list):
-    """Extract relevant ENT outpatient progress notes."""
-    if not isinstance(notes_list, list):
-        return ""
-
-    relevant_notes = []
-    for note in notes_list:
-        text = note.get('text', '')
-        if not isinstance(text, str):
-            continue
-
-        if (
-            "progress note, outpatient" in note.get('type', '').lower()
-            and any(kw in note.get('author', '').lower() for kw in ['ent', 'otolaryngology'])
-            or any(kw in text.lower() for kw in ['ent', 'otolaryngology'])
-        ):
-            relevant_notes.append(text)
-    return "\n---\n".join(relevant_notes)
-
 def process_procedures(procedures_list):
     """Returns two flags: if patient had surgery or endoscopy (CPT based)."""
     if not isinstance(procedures_list, list):
@@ -52,18 +93,7 @@ def process_procedures(procedures_list):
     )
     return had_surgery, had_endoscopy
 
-def extract_radiology_report(reports_list):
-    """Extract sinus CT radiology report text."""
-    if not isinstance(reports_list, list):
-        return ""
-
-    relevant_reports = [
-        report.get('text', '')
-        for report in reports_list
-        if 'ct' in str(report.get('type', '')).lower()
-        and any(kw in str(report.get('title', '')).lower() for kw in ['sinus', 'paranasal', 'nasal'])
-    ]
-    return "\n---\n".join(filter(None, relevant_reports))
+# LLM Prompting
 
 def query_openai(prompt):
     """Query GPT-4 for surgical decision based on input prompt."""
@@ -110,7 +140,7 @@ def generate_prompt(case):
     """
     return prompt
 
-def preprocess_all_patients(dataframes, surgery_codes):
+def process_all_patients(dataframes, surgery_codes):
     """Processes patient data and returns a dataframe of features for LLM input."""
     processed = []
 
@@ -157,6 +187,8 @@ def preprocess_all_patients(dataframes, surgery_codes):
 
     return pd.DataFrame(processed)
 
+
+# Evaluation
 def evaluate_predictions(eval_df):
     
     # Map LLM decision ('Yes'/'No') to boolean for comparison. Using .lower() is robust.
