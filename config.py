@@ -24,6 +24,26 @@ DATA_TABLES = [
     'radiology_report'
 ]
 
+CLINICAL_NOTE_TYPES = {
+    'Other Note', 'Other', 'Progress Note, Outpatient',
+    'Operative/Procedure Report', 'Consultation Note',
+    'History and Physical', 'Progress Note, Inpatient',
+    'Progress/Discharge/Transfer Summary', 'Discharge/Transfer Summary'
+}
+
+CLINICAL_NOTE_TITLES = {
+    'Procedure Note', 'Health Plan Operations CM Note', 'Airway',
+    'OUTSIDE RECORDS', 'PROC CT SCAN INFORMATION', 'Operative Note',
+    'Consult Follow-Up', 'Interval H&P Note', 'Unmapped External Note',
+    'OUTSD CLINIC VISITS/CONSULTS/NOTES', 'Surgical Procedure',
+    'Tertiary Survey', 'Admission H&P', 'H&P Interval', 'LARYNGOSCOPY ENT',
+    'Pre-Op H&P', 'SHC CT RESULT', 'H&P Preop', 'Procedures',
+    'IN CLINIC VNA - CT - MAXILLOFACIAL AREA', 'ORD CONSULT REQUEST',
+    'IMAGE ONLY - ENT ENDOSCOPY', 'Care Plan Note', 'Clinic Support Note',
+    'Clinic Visit', 'Consults', 'H&P', 'NASAL ENDOSCOPY ENT',
+    'Operative Report', 'Progress Notes', 'Sign Out Note'
+}
+
 # CPT codes and keywords
 SURGERY_CPT_CODES = {
     '31253', '31254', '31255', '31256', '31257', '31259', '31267',

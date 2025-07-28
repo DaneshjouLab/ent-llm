@@ -1,50 +1,33 @@
 # Helper functions for processing patient data
 
 # Data Extraction
-def extract_ent_notes(notes_list):
+def extract_ent_notes_dict(clinical_notes_df, note_types, note_titles):
     """
-    Extract relevant ENT notes from a list of clinical_note dicts,
-    based on important type/title values and ENT-related authors/text.
+    Extract relevant ENT notes.
     """
-    if not isinstance(notes_list, list):
-        return ""
+    
+    df = clinical_notes_df.copy()
+    
+    # Normalize string fields
+    df['author'] = df['author'].astype(str).str.lower()
+    df['text'] = df['text'].astype(str).str.lower()
+    df['type'] = df['type'].astype(str)
+    df['title'] = df['title'].astype(str)
 
-    important_types = {
-        'Other Note', 'Other', 'Progress Note, Outpatient','Operative/Procedure Report', 'Consultation Note',
-        'History and Physical', 'Progress Note, Inpatient', 'Progress/Discharge/Transfer Summary', 'Discharge/Transfer Summary'
-    }
+    # Match full word "ent" or "otolaryngology"
+    keyword = r'\b(?:ent|otolaryngology)\b'
+    
+    ent_filter = (
+        df['author'].str.contains(keyword, na=False, regex=True) |
+        df['text'].str.contains(keyword, na=False, regex=True)
+    )
 
-    important_titles = {
-        'Procedure Note', 'Health Plan Operations CM Note', 'Airway', 'OUTSIDE RECORDS', 'PROC CT SCAN INFORMATION', 'Operative Note',
-        'Consult Follow-Up', 'Interval H&P Note', 'Unmapped External Note', 'OUTSD CLINIC VISITS/CONSULTS/NOTES', 'Surgical Procedure',
-        'Tertiary Survey', 'Admission H&P', 'H&P Interval', 'LARYNGOSCOPY ENT','Pre-Op H&P', 'SHC CT RESULT', 'H&P Preop', 'Procedures',
-        'IN CLINIC VNA - CT - MAXILLOFACIAL AREA', 'ORD CONSULT REQUEST', 'IMAGE ONLY - ENT ENDOSCOPY', 'Care Plan Note', 'Clinic Support Note',
-        'Clinic Visit', 'Consults', 'H&P', 'NASAL ENDOSCOPY ENT', 'Operative Report', 'Procedures', 'Progress Notes', 'Sign Out Note'
-    }
+    key_filter = df['type'].isin(note_types) | df['title'].isin(note_titles)
 
-    relevant_notes = []
+    ent_df = df[ent_filter & key_filter].copy()
 
-    for note in notes_list:
-        note_type = note.get('type', '')
-        note_title = note.get('title', '')
-        author = note.get('author', '')
-        text = note.get('text', '')
+    return ent_df
 
-        if not isinstance(text, str):
-            continue
-
-        # Check if note is ENT-related and from a relevant type/title
-        ent_match = (
-            ('ent' in author.lower() or 'otolaryngology' in author.lower()) or
-            ('ent' in text.lower() or 'otolaryngology' in text.lower())
-        )
-
-        key_match = (note_type in important_types) or (note_title in important_titles)
-
-        if key_match and ent_match:
-            relevant_notes.append(text)
-
-    return "\n---\n".join(relevant_notes)
 
 def extract_radiology_report(reports_list):
     """Extract sinus CT radiology report text."""
