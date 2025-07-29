@@ -24,6 +24,7 @@ DATA_TABLES = [
     'radiology_report'
 ]
 
+# Clinical note types and titles
 CLINICAL_NOTE_TYPES = {
     'Other Note', 'Other', 'Progress Note, Outpatient',
     'Operative/Procedure Report', 'Consultation Note',
@@ -42,6 +43,13 @@ CLINICAL_NOTE_TITLES = {
     'IMAGE ONLY - ENT ENDOSCOPY', 'Care Plan Note', 'Clinic Support Note',
     'Clinic Visit', 'Consults', 'H&P', 'NASAL ENDOSCOPY ENT',
     'Operative Report', 'Progress Notes', 'Sign Out Note'
+}
+
+# Radiology report types and titles
+RADIOLOGY_REPORT_TYPE = {'CT'}
+RADIOLOGY_REPORT_TITLE = {
+    'CT ENT SINUS WO IV CONTRAST', 'CT SINUS LIMITED', 'CT FACIAL BONES OR SINUS', 
+    'CT FACIAL SINUSES O CONTRAST'
 }
 
 # CPT codes and keywords
