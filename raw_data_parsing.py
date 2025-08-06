@@ -1,7 +1,7 @@
 # Helper functions for processing patient data
 
 # ENT Note and Procedure Extraction
-def extract_ent_notes_ref(clinical_notes_df, note_types, note_titles):
+def extract_ent_notes(clinical_notes_df, note_types, note_titles):
     """Extract relevant ENT notes."""
 
     df = clinical_notes_df.copy()
