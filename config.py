@@ -16,11 +16,11 @@ DATASET_IDS = [
 
 # Name of tables to load from each dataset
 DATA_TABLES = [
-    'demographics',
+    # 'demographics',
     'clinical_note',
     'procedures',
-    'labs',
-    'med_orders',
+    # 'labs',
+    # 'med_orders',
     'radiology_report'
 ]
 

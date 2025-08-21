@@ -132,8 +132,20 @@ def build_patient_df(ent_df, radiology_df, surgery_df):
     # Group radiology reports by patient, filtering by surgery date
     def filter_radiology_by_surgery(group):
         patient_id = group.name
-        # Get surgery date for this patient
-        surgery_date = patient_data[patient_data['patient_id'] == patient_id]['first_surgery_date'].iloc[0]
+        
+        # Check if this patient exists in patient_data (i.e., has ENT notes)
+        patient_match = patient_data[patient_data['patient_id'] == patient_id]
+        
+        if len(patient_match) == 0:
+            # Patient has radiology but no ENT notes - check surgery data directly
+            surgery_match = surgery_df[surgery_df['patient_id'] == patient_id]
+            if len(surgery_match) > 0:
+                surgery_date = surgery_match['first_surgery_date'].iloc[0]
+            else:
+                surgery_date = pd.NaT  # No surgery data
+        else:
+            # Patient has ENT notes, get surgery date from patient_data
+            surgery_date = patient_match['first_surgery_date'].iloc[0]
 
         # Filter radiology reports
         if pd.notna(surgery_date):
@@ -156,11 +168,12 @@ def build_patient_df(ent_df, radiology_df, surgery_df):
 
     rad_grouped = radiology_df.groupby('patient_id').apply(filter_radiology_by_surgery, include_groups=False).reset_index(name='radiology_reports')
 
-    # Merge radiology data
-    patient_data = pd.merge(patient_data, rad_grouped, on='patient_id', how='left')
+    # Merge radiology data - use outer join to include patients with radiology but no ENT notes
+    patient_data = pd.merge(patient_data, rad_grouped, on='patient_id', how='outer')
 
-    # Handle missing values
+    # Handle missing values for patients who have radiology but no ENT notes
     patient_data['ent_notes'] = patient_data['ent_notes'].apply(lambda x: x if isinstance(x, list) else [])
     patient_data['radiology_reports'] = patient_data['radiology_reports'].apply(lambda x: x if isinstance(x, list) else [])
+    patient_data['had_surgery'] = patient_data['had_surgery'].fillna(False)
 
     return patient_data

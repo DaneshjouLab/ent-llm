@@ -71,7 +71,7 @@ WEAK_SURGICAL_PHRASES = [
     r'surgical.{0,20}(?:planning|plan|discussion)',
     r'^(?:assessment\s+and\s+plan|plan):',  # anchored to start of chunk
 
-    # Discussion/decision-making - FIXED
+    # Discussion/decision-making 
     r'surgery.{0,20}(?:discussed?|discussion)',
     r'(?:sinus\s+)?surgery\s+was\s+discussed',
     r'consider\s+(?:endoscopic\s+)?surgery',

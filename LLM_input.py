@@ -80,7 +80,7 @@ def create_llm_dataframe(processed_df: pd.DataFrame) -> pd.DataFrame:
 
     # Build the new DataFrame
     llm_df = pd.DataFrame({
-        'llm_caseID': range(1, len(processed_df) + 1),
+        'llm_caseID': processed_df['llm_caseID'].values,  # Use original case IDs!
         'formatted_radiology_text': formatted_radiology,
         'formatted_progress_text': formatted_progress
     })
