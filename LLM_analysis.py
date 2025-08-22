@@ -4,12 +4,13 @@ import json
 import logging
 import time
 from typing import Dict, Any
+from tqdm import tqdm
 
 def query_openai(prompt: str, client) -> str:
-    """Query GPT-4 for surgical decision based on input prompt."""
+    """Query GPT-4omini for surgical decision based on input prompt."""
     try:
         response = client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": (
                     "You are an expert otolaryngologist. "
@@ -63,7 +64,7 @@ def parse_llm_response(response: str) -> Dict[str, Any]:
         return default_response
 
     try:
-        # Try to find JSON in the response
+        # Search JSON in the response
         response = response.strip()
         if response.startswith('```json'):
             response = response.replace('```json', '').replace('```', '').strip()
@@ -85,7 +86,7 @@ def parse_llm_response(response: str) -> Dict[str, Any]:
         logging.error(f"Unexpected error parsing response: {e}")
         return default_response
 
-def process_llm_cases(llm_df: pd.DataFrame, api_key: str, delay_seconds: float = 1.0) -> pd.DataFrame:
+def process_llm_cases(llm_df: pd.DataFrame, api_key: str, delay_seconds: float = 0.2) -> pd.DataFrame:
     """
     Process a clean LLM DataFrame through OpenAI API.
 
@@ -102,12 +103,8 @@ def process_llm_cases(llm_df: pd.DataFrame, api_key: str, delay_seconds: float =
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
     # Initialize OpenAI client
-    try:
-        client = openai.OpenAI(api_key=api_key)
-        logging.info("OpenAI client initialized successfully")
-    except Exception as e:
-        logging.error(f"Failed to initialize OpenAI client: {e}")
-        raise
+    client = openai.OpenAI(api_key=api_key)
+    logging.info("OpenAI client initialized successfully")
 
     # Create a copy of the dataframe
     result_df = llm_df.copy()
@@ -120,8 +117,9 @@ def process_llm_cases(llm_df: pd.DataFrame, api_key: str, delay_seconds: float =
 
     total_rows = len(result_df)
     logging.info(f"Processing {total_rows} cases...")
+    start_time = time.time()
 
-    for idx, row in result_df.iterrows():
+    for idx, row in tqdm(result_df.iterrows(), total=total_rows, desc="Processing cases"):
         try:
             case_id = row['llm_caseID']
             logging.info(f"Processing case {idx + 1}/{total_rows}: Case ID {case_id}")
@@ -152,11 +150,22 @@ def process_llm_cases(llm_df: pd.DataFrame, api_key: str, delay_seconds: float =
             if delay_seconds > 0:
                 time.sleep(delay_seconds)
 
+            # Progress updates every 100 cases
+            if (idx + 1) % 100 == 0:
+                elapsed = time.time() - start_time
+                rate = (idx + 1) / elapsed * 60  # cases per minute
+                remaining = total_rows - (idx + 1)
+                eta_minutes = remaining / (rate / 60) if rate > 0 else 0
+                print(f"Processed {idx + 1}/{total_rows} cases. Rate: {rate:.1f}/min, ETA: {eta_minutes:.1f}min")
+
+
         except Exception as e:
             logging.error(f"Error processing case {case_id}: {e}")
             result_df.at[idx, 'reasoning'] = f"Error: {str(e)}"
 
-    logging.info("Processing complete!")
+    elapsed = time.time() - start_time
+    final_rate = total_rows / elapsed * 60
+    logging.info(f"Processing complete! {total_rows} cases in {elapsed:.1f}s ({final_rate:.1f} cases/min)")
     return result_df
 
 
@@ -176,7 +185,7 @@ def run_llm_analysis(llm_df, api_key):
     print(f"DataFrame columns: {list(llm_df.columns)}")
 
     # Process the cases
-    results_df = process_llm_cases(llm_df, api_key, delay_seconds=1.0)
+    results_df = process_llm_cases(llm_df, api_key, delay_seconds=0.2)
 
     # Show summary
     total_cases = len(results_df)
