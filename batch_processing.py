@@ -214,7 +214,7 @@ def process_batch(batch_data: Dict[str, pd.DataFrame],
         return pd.DataFrame(), pd.DataFrame(), global_case_id_counter
 
 
- def main_batch_processing():
+def main_batch_processing():
     """Main function that processes data in batches"""
 
     # Initialize processor
