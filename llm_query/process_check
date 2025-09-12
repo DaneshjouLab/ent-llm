@@ -1,0 +1,41 @@
+# Check radiology counts in processed_df
+has_rad = final_processed_df['radiology_reports'].apply(lambda x: len(x) > 0 if isinstance(x, list) else False).sum()
+no_rad = len(final_processed_df) - has_rad
+print(f"Processed DF - With radiology: {has_rad}, Without: {no_rad}")
+
+# Check radiology counts in llm_df
+has_rad_llm = (final_llm_df['formatted_radiology_text'] != 'No radiology reports available.').sum()
+no_rad_llm = (final_llm_df['formatted_radiology_text'] == 'No radiology reports available.').sum()
+print(f"LLM DF - With radiology: {has_rad_llm}, Without: {no_rad_llm}")
+
+# Check if radiology text issues are clustered by case ID order
+final_llm_df['has_valid_radiology'] = (
+    (final_llm_df['formatted_radiology_text'] != "No radiology reports available.") &
+    (final_llm_df['formatted_radiology_text'].notna()) &
+    (final_llm_df['formatted_radiology_text'].str.strip() != "")
+)
+
+# Sort by llm_caseID to see the pattern
+sorted_df = final_llm_df[['llm_caseID', 'has_valid_radiology']].sort_values('llm_caseID')
+
+# Check first and last cases with valid radiology
+valid_cases = sorted_df[sorted_df['has_valid_radiology'] == True]
+print(f"First case with valid radiology: {valid_cases['llm_caseID'].min()}")
+print(f"Last case with valid radiology: {valid_cases['llm_caseID'].max()}")
+
+# Check distribution across case ID ranges
+ranges = [0, 5000, 10000, 15000, 20000]
+for i in range(len(ranges)-1):
+    range_cases = sorted_df[(sorted_df['llm_caseID'] >= ranges[i]) & (sorted_df['llm_caseID'] < ranges[i+1])]
+    valid_in_range = range_cases['has_valid_radiology'].sum()
+    total_in_range = len(range_cases)
+    if total_in_range > 0:
+        print(f"Cases {ranges[i]}-{ranges[i+1]-1}: {valid_in_range}/{total_in_range} ({valid_in_range/total_in_range*100:.1f}%) have radiology")
+
+
+# checking processing was done correctly
+final_llm_df.head()
+count = (final_llm_df['formatted_radiology_text']!= "No radiology reports available.").sum()
+print(count)
+processed_count = final_processed_df['has_radiology'].sum()
+print(processed_count)
