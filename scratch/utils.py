@@ -1,5 +1,137 @@
 # Helper functions for processing patient data
 
+# ENT Note and Procedure Extraction
+def extract_ent_notes(clinical_notes_df, note_types, note_titles):
+    """Extract relevant ENT notes."""
+    
+    df = clinical_notes_df.copy()
+    
+    # Normalize string fields
+    df['author'] = df['author'].astype(str).str.lower()
+    df['text'] = df['text'].astype(str).str.lower()
+    df['type'] = df['type'].astype(str)
+    df['title'] = df['title'].astype(str)
+
+    # Match full word "ent" or "otolaryngology"
+    keyword = r'\b(?:ent|otolaryngology)\b'
+    
+    ent_filter = (
+        df['author'].str.contains(keyword, na=False, regex=True) |
+        df['text'].str.contains(keyword, na=False, regex=True)
+    )
+
+    key_filter = df['type'].isin(note_types) | df['title'].isin(note_titles)
+
+    ent_df = df[ent_filter & key_filter].copy()
+
+    return ent_df
+
+def extract_radiology_reports(radiology_df, types, titles):
+    """Extract relevant radiology reports."""
+    df = radiology_df.copy()
+
+    # Normalize string fields
+    df['type'] = df['type'].astype(str)
+    df['title'] = df['title'].astype(str)
+    df['text'] = df['text'].astype(str).str.lower()
+
+    # Filter by type or title match
+    type_filter = df['type'].isin(types)
+    title_filter = df['title'].isin(titles)
+
+    filtered_df = df[type_filter & title_filter].copy()
+    
+    return filtered_df
+
+def procedures_df(procedures_df, surgery_cpt_codes, endoscopy_cpt_codes):
+    """Returns a dataframe with patients that had surgery or endoscopy (CPT based)."""
+
+    # Check code and code_type columns are strings
+    procedures_df['code'] = procedures_df['code'].astype(str)
+    procedures_df['code_type'] = procedures_df['code_type'].astype(str)
+
+    # Initialize the results dictionary
+    results = {}
+
+    for patient_id in procedures_df['patient_id'].unique():
+        patient_procs = procedures_df[procedures_df['patient_id'] == patient_id]
+
+        had_surgery = any(
+            proc in surgery_cpt_codes
+            for proc in patient_procs[patient_procs['code_type'].str.upper() == 'CPT']['code']
+        )
+        had_endoscopy = any(
+            proc in endoscopy_cpt_codes
+            for proc in patient_procs[patient_procs['code_type'].str.upper() == 'CPT']['code']
+        )
+
+        results[patient_id] = {'had_surgery': had_surgery, 'had_endoscopy': had_endoscopy}
+
+    # Convert the results dictionary into a DataFrame
+    results_df = pd.DataFrame.from_dict(results, orient='index').reset_index()
+    results_df.rename(columns={'index': 'patient_id'}, inplace=True)
+
+    return results_df
+
+
+def build_patient_df(ent_df, radiology_df, surgery_df):
+    """Builds a patient-level DataFrame with ENT notes, radiology reports, and surgery data."""
+    import pandas as pd
+    # Normalize and clean dates
+    ent_df['date'] = pd.to_datetime(ent_df['date'], errors='coerce')
+    radiology_df['date'] = pd.to_datetime(radiology_df['date'], errors='coerce')
+
+    # Ensure columns are strings
+    for df in [ent_df, radiology_df]:
+        df['text'] = df['text'].astype(str)
+        df['type'] = df['type'].astype(str)
+        df['title'] = df['title'].astype(str)
+
+    # Group ENT notes by patient
+    ent_grouped = ent_df.groupby('patient_id').apply(
+        lambda x: sorted(
+            [
+                {
+                    'date': d.strftime('%Y-%m-%d') if pd.notnull(d) else None,
+                    'type': typ,
+                    'title': ttl,
+                    'text': t
+                }
+                for d, t, typ, ttl in zip(x['date'], x['text'], x['type'], x['title'])
+            ],
+            key=lambda note: note['date'] if note['date'] else ''
+        )
+    ).reset_index(name='ent_notes')
+
+    # Group radiology reports by patient
+    rad_grouped = radiology_df.groupby('patient_id').apply(
+        lambda x: sorted(
+            [
+                {
+                    'date': d.strftime('%Y-%m-%d') if pd.notnull(d) else None,
+                    'type': typ,
+                    'title': ttl,
+                    'text': t
+                }
+                for d, t, typ, ttl in zip(x['date'], x['text'], x['type'], x['title'])
+            ],
+            key=lambda note: note['date'] if note['date'] else ''
+        )
+    ).reset_index(name='radiology_reports')
+
+    # Merge patient note data
+    patient_data = pd.merge(ent_grouped, rad_grouped, on='patient_id', how='outer')
+    patient_data = pd.merge(patient_data, surgery_df, on='patient_id', how='left')
+
+    # Handle missing values
+    patient_data['ent_notes'] = patient_data['ent_notes'].apply(lambda x: x if isinstance(x, list) else [])
+    patient_data['radiology_reports'] = patient_data['radiology_reports'].apply(lambda x: x if isinstance(x, list) else [])
+    patient_data['had_surgery'] = patient_data['had_surgery'].fillna(False)
+
+    return patient_data
+
+# Patient Data Processing 
+
 def censor_surgical_plans(text):
     """Remove sentence that suggest surgical plans or recommendations."""
     import re
@@ -18,52 +150,9 @@ def censor_surgical_plans(text):
     censored = [s for s in sentences if not any(kw in s for kw in censor_keywords)]
     return " ".join(censored)
 
-def extract_ent_notes(notes_list):
-    """Extract relevant ENT outpatient progress notes."""
-    if not isinstance(notes_list, list):
-        return ""
+# 
 
-    relevant_notes = []
-    for note in notes_list:
-        text = note.get('text', '')
-        if not isinstance(text, str):
-            continue
-
-        if (
-            "progress note, outpatient" in note.get('type', '').lower()
-            and any(kw in note.get('author', '').lower() for kw in ['ent', 'otolaryngology'])
-            or any(kw in text.lower() for kw in ['ent', 'otolaryngology'])
-        ):
-            relevant_notes.append(text)
-    return "\n---\n".join(relevant_notes)
-
-def process_procedures(procedures_list):
-    """Returns two flags: if patient had surgery or endoscopy (CPT based)."""
-    if not isinstance(procedures_list, list):
-        return False, False
-
-    had_surgery = any(
-        proc.get('code') in SURGERY_CPT_CODES
-        for proc in procedures_list if proc.get('code_type') == 'CPT'
-    )
-    had_endoscopy = any(
-        proc.get('code') in DIAGNOSTIC_ENDOSCOPY_CPT_CODES
-        for proc in procedures_list if proc.get('code_type') == 'CPT'
-    )
-    return had_surgery, had_endoscopy
-
-def extract_radiology_report(reports_list):
-    """Extract sinus CT radiology report text."""
-    if not isinstance(reports_list, list):
-        return ""
-
-    relevant_reports = [
-        report.get('text', '')
-        for report in reports_list
-        if 'ct' in str(report.get('type', '')).lower()
-        and any(kw in str(report.get('title', '')).lower() for kw in ['sinus', 'paranasal', 'nasal'])
-    ]
-    return "\n---\n".join(filter(None, relevant_reports))
+# LLM Prompting
 
 def query_openai(prompt):
     """Query GPT-4 for surgical decision based on input prompt."""
@@ -110,7 +199,7 @@ def generate_prompt(case):
     """
     return prompt
 
-def preprocess_all_patients(dataframes, surgery_codes):
+def process_all_patients(dataframes, surgery_codes):
     """Processes patient data and returns a dataframe of features for LLM input."""
     processed = []
 
@@ -157,6 +246,8 @@ def preprocess_all_patients(dataframes, surgery_codes):
 
     return pd.DataFrame(processed)
 
+
+# Evaluation
 def evaluate_predictions(eval_df):
     
     # Map LLM decision ('Yes'/'No') to boolean for comparison. Using .lower() is robust.
