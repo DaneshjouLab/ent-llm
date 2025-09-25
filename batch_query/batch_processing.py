@@ -1,3 +1,5 @@
+from google.cloud import bigquery
+
 class BatchProcessor:
     """Handles batch processing of patient data."""
 
@@ -29,7 +31,7 @@ class BatchProcessor:
         return int(result['total_patients'].iloc[0])
 
     def get_patient_batches(self) -> Iterator[List[str]]:
-        """Generator that yields batches of patient IDs, matching extract_sample logic."""
+        """Generator that yields batches of patient IDs."""
         notes_union = "\nUNION ALL\n".join(
             f"SELECT {self.patient_identifier} FROM `{self.project_id}.{ds}.clinical_note`"
             for ds in self.dataset_ids
@@ -69,7 +71,7 @@ class BatchProcessor:
 
     def extract_batch_data(self, patient_ids: List[str],
                           table_names: List[str]) -> Dict[str, pd.DataFrame]:
-        """Extract data for a batch of patients, exactly matching extract_sample logic."""
+        """Extract all data for a batch of patients."""
         batch_data = {}
 
         # Format patient IDs for SQL IN clause (same as extract_sample)
@@ -77,7 +79,7 @@ class BatchProcessor:
 
         print(f"Extracting data for {len(patient_ids)} patients...")
 
-        # Extract patient data from each table for sampled patients (same as extract_sample)
+        # Extract patient data from each table for patients
         for table in table_names:
             print(f"Loading table: {table}")
 
@@ -114,61 +116,54 @@ class BatchProcessor:
 
         return batch_data
 
-# Extract ENT and Radiology reports in batches
+# Extract ENT and related data in batches
 def process_batch(batch_data: Dict[str, pd.DataFrame],
                  patient_ids: List[str],
-                 global_case_id_counter: int) -> Tuple[pd.DataFrame, pd.DataFrame, int]:
-    """Process a single batch of patient data following the exact original pipeline."""
+                 global_case_id_counter: int,
+                 surgery_cpt_codes: List[str],
+                 radiology_types: List[str],
+                 radiology_titles: List[str],
+                 clinical_note_types: List[str],
+                 clinical_note_titles: List[str]) -> Tuple[pd.DataFrame, pd.DataFrame, int]:
+    """Process a single batch of patient data."""
     try:
         print(f"\n=== Processing Batch of {len(patient_ids)} patients ===")
 
-        # Extract ENT notes for this batch (exact same call as your original)
+        # Extract ENT notes for this batch
         if 'clinical_note' in batch_data and not batch_data['clinical_note'].empty:
             print("Extracting ENT notes...")
             ent_notes = extract_ent_notes(
                 batch_data["clinical_note"],
-                CLINICAL_NOTE_TYPES,
-                CLINICAL_NOTE_TITLES
+                clinical_note_types,
+                clinical_note_titles
             )
             print(f"  Found {len(ent_notes)} ENT notes")
         else:
             print("No clinical notes data for this batch")
             ent_notes = pd.DataFrame()
 
-        # Extract radiology reports for this batch
-        if 'radiology_report' in batch_data and not batch_data['radiology_report'].empty:
-            print("Extracting radiology reports...")
-            rad_reports = extract_radiology_reports(
-                batch_data["radiology_report"],
-                RADIOLOGY_REPORT_TYPE,
-                RADIOLOGY_REPORT_TITLE
-            )
-            print(f"  Found {len(rad_reports)} radiology reports")
-        else:
-            print("No radiology data for this batch")
-            rad_reports = pd.DataFrame()
-
-        # Process procedures
-        if 'procedures' in batch_data and not batch_data['procedures'].empty:
-            print("Processing procedures...")
-            procedures = procedures_df(
-                batch_data['procedures'],
-                SURGERY_CPT_CODES,
-                DIAGNOSTIC_ENDOSCOPY_CPT_CODES
-            )
-            print(f"  Found {len(procedures)} relevant procedures")
-        else:
-            print("No procedures data for this batch")
-            procedures = pd.DataFrame()
-
-        # Check if we have any data to process
-        if ent_notes.empty and rad_reports.empty and procedures.empty:
-            print("No relevant data found in this batch")
+        # Skip if no ENT notes found 
+        if ent_notes.empty:
+            print("No ENT notes found - skipping batch")
             return pd.DataFrame(), pd.DataFrame(), global_case_id_counter
+        
+        # Prepare all data tables, using empty DataFrames for missing tables
+        radiology_data = batch_data.get('radiology_report', pd.DataFrame())
+        procedures_data = batch_data.get('procedures', pd.DataFrame())
+        demographics_data = batch_data.get('demographics', pd.DataFrame())
+        lab_data = batch_data.get('labs', pd.DataFrame())
 
-        # Build patient dataframe for this batch
-        print("Building patient dataframe...")
-        patient_df = build_patient_df(ent_notes, rad_reports, procedures)
+        # Call the helper function directly
+        patient_df = build_patient_df(
+            ent_df=ent_notes,
+            radiology_df=radiology_data,
+            procedures_df=procedures_data,
+            demographics_df=demographics_data,
+            lab_df=lab_data,
+            surgery_cpt_codes=surgery_cpt_codes,
+            radiology_types=radiology_types,
+            radiology_titles=radiology_titles
+        )
 
         if patient_df.empty:
             print("No patients to process after building patient_df")
@@ -176,15 +171,10 @@ def process_batch(batch_data: Dict[str, pd.DataFrame],
 
         print(f"Patient dataframe created: {len(patient_df)} patients")
 
-        # Add progress notes
-        print("Adding progress notes...")
+        # Add & redact progress notes
         patient_df_with_progress = add_last_progress_note(patient_df)
-        print(f"After adding progress notes: {len(patient_df_with_progress)} patients")
-
-        # Censor notes and get skipped IDs
-        print("Censoring notes...")
         processed_df, skipped_ids = recursive_censor_notes(patient_df_with_progress)
-        print(f"After censoring: {len(processed_df)} patients, {len(skipped_ids)} skipped")
+        print(f"After redacting notes: {len(processed_df)} patients, {len(skipped_ids)} skipped")
 
         # Create sequential case IDs continuing from global counter
         if not processed_df.empty:
@@ -196,14 +186,16 @@ def process_batch(batch_data: Dict[str, pd.DataFrame],
             new_counter = global_case_id_counter
 
         # Format for LLM input
-        print("Creating LLM dataframe...")
         llm_df = create_llm_dataframe(processed_df) if not processed_df.empty else pd.DataFrame()
         print(f"LLM dataframe created: {len(llm_df)} records")
 
         print(f"Batch processed: {len(processed_df)} cases ready for LLM, {len(skipped_ids)} skipped")
 
-        # Format Processed_DF
-        processed_df['has_radiology'] = [arr.size > 0 for arr in processed_df['radiology_reports']]
+        # Add has_radiology flag
+        if not processed_df.empty:
+            processed_df['has_radiology'] = processed_df['radiology_reports'].apply(
+                lambda x: len(x) > 0 if isinstance(x, list) else False
+            )
 
         return llm_df, processed_df, new_counter
 
@@ -214,11 +206,18 @@ def process_batch(batch_data: Dict[str, pd.DataFrame],
         return pd.DataFrame(), pd.DataFrame(), global_case_id_counter
 
 
-def main_batch_processing():
+def main_batch_processing(surgery_cpt_codes: List[str],
+                         radiology_types: List[str], 
+                         radiology_titles: List[str],
+                         clinical_note_types: List[str],
+                         clinical_note_titles: List[str],
+                         project_id: str,
+                         dataset_ids: List[str],
+                         data_tables: List[str]):
     """Main function that processes data in batches"""
 
     # Initialize processor
-    processor = BatchProcessor(PROJECT_ID, DATASET_IDS, batch_size=100)
+    processor = BatchProcessor(project_id, dataset_ids, batch_size=100)
 
     # Get total count for progress tracking
     try:
@@ -241,12 +240,19 @@ def main_batch_processing():
             print(f"BATCH {batch_num}")
             print(f"{'='*60}")
 
-            # Extract batch
-            batch_data = processor.extract_batch_data(patient_batch, DATA_TABLES)
+            # Extract batch data
+            batch_data = processor.extract_batch_data(patient_batch, data_tables)
 
-            # Process the batch
+            # Process the batch using helper functions
             llm_df, processed_df, global_case_id_counter = process_batch(
-                batch_data, patient_batch, global_case_id_counter
+                batch_data=batch_data,
+                patient_ids=patient_batch,
+                global_case_id_counter=global_case_id_counter,
+                surgery_cpt_codes=surgery_cpt_codes,
+                radiology_types=radiology_types,
+                radiology_titles=radiology_titles,
+                clinical_note_types=clinical_note_types,
+                clinical_note_titles=clinical_note_titles
             )
 
             # Collect results
