@@ -37,7 +37,7 @@ class BatchProcessor:
             for ds in self.dataset_ids
         )
 
-        # Get all patient IDs, ordered for consistent batching  
+        # Get all patient IDs, ordered for consistent batching (same as extract_sample)
         all_patients_query = f"""
         WITH all_notes AS (
             SELECT DISTINCT {self.patient_identifier} FROM ({notes_union})
@@ -233,7 +233,7 @@ def main_batch_processing(surgery_cpt_codes: List[str],
     batch_num = 0
 
     try:
-        # Extracts patients in multiple batches
+        # This loop extracts patients in multiple batches
         for patient_batch in processor.get_patient_batches():
             batch_num += 1
             print(f"\n{'='*60}")

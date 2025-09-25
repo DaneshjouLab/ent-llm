@@ -1,4 +1,8 @@
 # Helper functions for processing patient data
+
+# ENT Note and Procedure Extraction
+import pandas as pd
+
 def extract_ent_notes(clinical_notes_df, note_types, note_titles):
     """Extract relevant ENT notes."""
 
@@ -107,6 +111,7 @@ def extract_demographic_data(demographics_df, ent_patient_ids):
     # Remove duplicates by keeping most recent record
     demo_df = demo_df.drop_duplicates(subset=['patient_id'], keep='last')
     
+    
     return demo_df
 
 def extract_lab_data(lab_df, ent_patient_ids, surgery_dates_dict=None):
@@ -173,7 +178,7 @@ def build_patient_df(ent_df, radiology_df, procedures_df, demographics_df, lab_d
     """Builds a patient-level DataFrame with ENT notes, radiology reports, surgery, demographics, and lab data."""
     import pandas as pd
 
-    # Get unique ENT patient IDs
+    # Get unique ENT patient IDs (this is our master list)
     ent_patient_ids = set(ent_df['patient_id'].unique())
     print(f"Found {len(ent_patient_ids)} unique ENT patients")
 
