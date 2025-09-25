@@ -1,4 +1,5 @@
 from google.cloud import bigquery
+from typing import List
 
 class BatchProcessor:
     """Handles batch processing of patient data."""
