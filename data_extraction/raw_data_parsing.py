@@ -23,14 +23,13 @@ def extract_ent_notes(clinical_notes_df, note_types, note_titles):
     )
 
     key_filter = df['type'].isin(note_types) | df['title'].isin(note_titles)
-
     ent_df = df[ent_filter & key_filter].copy()
 
     return ent_df
 
 def extract_radiology_reports(radiology_df, ent_patient_ids, types, titles):
     """Extract relevant radiology reports."""
-    
+
     df = radiology_df[radiology_df['patient_id'].isin(ent_patient_ids)].copy()
 
     # Normalize string fields
@@ -43,16 +42,16 @@ def extract_radiology_reports(radiology_df, ent_patient_ids, types, titles):
     title_filter = df['title'].isin(titles)
 
     filtered_df = df[type_filter & title_filter].copy()
-    
+
     return filtered_df
 
 def extract_procedures_df(ent_procedures_df, ent_patient_ids, surgery_cpt_codes):
     """Returns a dataframe with surgery/endoscopy flags and their earliest CPT dates."""
     import pandas as pd
 
-    # Filter to ENT patients 
+    # Filter to ENT patients
     procedures_df = ent_procedures_df[ent_procedures_df['patient_id'].isin(ent_patient_ids)].copy()
-    
+
     # Ensure proper data types
     procedures_df['code'] = procedures_df['code'].astype(str)
     procedures_df['code_type'] = procedures_df['code_type'].astype(str)
@@ -93,88 +92,28 @@ def extract_procedures_df(ent_procedures_df, ent_patient_ids, surgery_cpt_codes)
 def extract_demographic_data(demographics_df, ent_patient_ids):
     """Extract demographic data for specific patients only."""
 
-    # Filter to patient IDs 
+    # Filter to patient IDs
     ent_demographics_df = demographics_df[demographics_df['patient_id'].isin(ent_patient_ids)].copy()
-    
+
     # Filter to relevant demographic columns
     demographic_columns = [
-        'patient_id', 'legal_sex', 'race', 'ethnicity', 'date_of_birth', 
+        'patient_id', 'legal_sex', 'race', 'ethnicity', 'date_of_birth',
         'recent_bmi', 'smoking_hx', 'alcohol_use', 'zipcode', 'insurance_type', 'occupation'
     ]
-    
+
     demo_df = ent_demographics_df[demographic_columns].copy()
-    
+
     # Normalize data types
     if 'date_of_birth' in demo_df.columns:
         demo_df['date_of_birth'] = pd.to_datetime(demo_df['date_of_birth'], errors='coerce')
-    
+
     # Remove duplicates by keeping most recent record
     demo_df = demo_df.drop_duplicates(subset=['patient_id'], keep='last')
-    
-    
+
+
     return demo_df
 
-def extract_lab_data(lab_df, ent_patient_ids, surgery_dates_dict=None):
-    """Extract and process lab data for specific patients only, filtered by surgery date if available."""
-    import pandas as pd
-    
-    # Filter to patient IDs
-    lab_df = lab_df[lab_df['patient_id'].isin(ent_patient_ids)].copy()
-
-    if lab_df.empty:
-        return pd.DataFrame(columns=['patient_id', 'lab_results'])
-    
-    # Ensure proper data types
-    lab_df['patient_id'] = lab_df['patient_id'].astype(str)
-    
-    # Convert date columns to datetime
-    date_columns = ['order_date', 'taken_date', 'result_date']
-    for col in date_columns:
-        if col in lab_df.columns:
-            lab_df[col] = pd.to_datetime(lab_df[col], errors='coerce')
-    
-    # Filter by surgery date if provided
-    if surgery_dates_dict:
-        def filter_by_surgery_date(row):
-            patient_id = row['patient_id']
-            surgery_date = surgery_dates_dict.get(patient_id)
-            
-            if pd.notna(surgery_date):
-                # Use result_date if available, otherwise taken_date, otherwise order_date
-                lab_date = row['result_date'] if pd.notna(row['result_date']) else (
-                    row['taken_date'] if pd.notna(row['taken_date']) else row['order_date']
-                )
-                if pd.notna(lab_date):
-                    return lab_date < surgery_date
-            
-            # If no surgery date or no lab date, include the lab result
-            return True
-        
-        lab_df = lab_df[lab_df.apply(filter_by_surgery_date, axis=1)]
-    
-    # Group lab results by patient
-    lab_grouped = lab_df.groupby('patient_id').apply(
-        lambda x: sorted(
-            [
-                {
-                    'order_date': row['order_date'].strftime('%Y-%m-%d') if pd.notnull(row['order_date']) else None,
-                    'taken_date': row['taken_date'].strftime('%Y-%m-%d') if pd.notnull(row['taken_date']) else None,
-                    'result_date': row['result_date'].strftime('%Y-%m-%d') if pd.notnull(row['result_date']) else None,
-                    'age': row.get('age'),
-                    'lab': row['lab'],
-                    'result': row['result'],
-                    'value': row.get('value')
-                }
-                for _, row in x.iterrows()
-            ],
-            key=lambda lab: lab['result_date'] if lab['result_date'] else ''
-        ),
-        include_groups=False
-    ).reset_index(name='lab_results')
-
-    return lab_grouped
-    
-def build_patient_df(ent_df, radiology_df, procedures_df, demographics_df, lab_df, surgery_cpt_codes, radiology_types, radiology_titles):
+def build_patient_df(ent_df, radiology_df, procedures_df, demographics_df, surgery_cpt_codes, radiology_types, radiology_titles):
     """Builds a patient-level DataFrame with ENT notes, radiology reports, surgery, demographics, and lab data."""
     import pandas as pd
 
@@ -209,11 +148,11 @@ def build_patient_df(ent_df, radiology_df, procedures_df, demographics_df, lab_d
 
     # Get procedures data for ENT patients only
     surgery_df = extract_procedures_df(procedures_df, ent_patient_ids, surgery_cpt_codes)
-    
+
     # Merge with surgery data first to get surgery dates
     patient_data = pd.merge(ent_grouped, surgery_df, on='patient_id', how='left')
     patient_data['had_surgery'] = patient_data['had_surgery'].fillna(False)
-    print(f"After surgery merge: {len(patient_data)} patients") 
+    print(f"After surgery merge: {len(patient_data)} patients")
 
     # Create surgery dates dictionary for filtering
     surgery_dates_dict = {}
@@ -232,7 +171,7 @@ def build_patient_df(ent_df, radiology_df, procedures_df, demographics_df, lab_d
         def filter_radiology_by_surgery(group):
             patient_id = group.name
             patient_match = patient_data[patient_data['patient_id'] == patient_id]
-            
+
             if len(patient_match) > 0:
                 surgery_date = patient_match['first_surgery_date'].iloc[0]
                 if pd.notna(surgery_date):
@@ -251,22 +190,16 @@ def build_patient_df(ent_df, radiology_df, procedures_df, demographics_df, lab_d
                 ],
                 key=lambda note: note['date'] if note['date'] else ''
             )
-        
+
         rad_grouped = filtered_radiology.groupby('patient_id').apply(filter_radiology_by_surgery, include_groups=False).reset_index(name='radiology_reports')
         patient_data = pd.merge(patient_data, rad_grouped, on='patient_id', how='left')
         print(f"After radiology merge: {len(patient_data)} patients")
-    
+
     # Handle missing radiology reports
     patient_data['radiology_reports'] = patient_data['radiology_reports'].apply(lambda x: x if isinstance(x, list) else [])
-    
+
     demo_data = extract_demographic_data(demographics_df, ent_patient_ids)
     patient_data = pd.merge(patient_data, demo_data, on='patient_id', how='left')
-    print(f"After demographics merge: {len(patient_data)} patients")
-
-    lab_data = extract_lab_data(lab_df, ent_patient_ids)
-    patient_data = pd.merge(patient_data, lab_data, on='patient_id', how='left')
-    patient_data['lab_results'] = patient_data['lab_results'].apply(lambda x: x if isinstance(x, list) else [])
-    print(f"After lab merge: {len(patient_data)} patients")
 
     print(f"Final dataset contains {len(patient_data)} ENT patients")
     return patient_data

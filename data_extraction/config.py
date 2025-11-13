@@ -19,8 +19,8 @@ DATA_TABLES = [
     'demographics',
     'clinical_note',
     'procedures',
-    'labs',
-    'med_orders',
+    # 'labs', 
+    # 'med_orders',
     'radiology_report'
 ]
 

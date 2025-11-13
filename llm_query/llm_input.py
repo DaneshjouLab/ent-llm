@@ -45,25 +45,45 @@ def format_medical_data(progress_note: Union[Dict, None], radiology_reports: Lis
         'has_radiology_report': has_radiology
     }
 
+
 def create_llm_dataframe(processed_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Create a clean 3-column DataFrame for LLM queries.
+    Create a DataFrame for LLM queries with demographics and medical data.
 
     Args:
-        processed_df: DataFrame with 'radiology_reports' and 'last_progress_note_censored' columns
+        processed_df: DataFrame with processed patient data including:
+            - llm_caseID
+            - last_progress_note_censored
+            - radiology_reports
+            - ent_notes
+            - demographics fields
 
     Returns:
-        DataFrame with columns: llm_caseID, formatted_radiology_text, formatted_progress_text
+        DataFrame with patient demographics and formatted medical text columns
     """
     # Initialize columns for formatted text
     formatted_radiology = []
     formatted_progress = []
+    ages = []
 
     # Process each row
     for idx, row in processed_df.iterrows():
         # Get the single progress note (not a list)
         progress_note = row.get('last_progress_note_censored')
         radiology_reports = row.get('radiology_reports', [])
+
+        # Calculate age from date of birth
+        dob = row.get('date_of_birth')
+        age = None
+        if pd.notna(dob):
+            try:
+                dob_dt = pd.to_datetime(dob)
+                note_dt = pd.to_datetime(progress_note['date'])
+                age = note_dt.year - dob_dt.year - ((note_dt.month, note_dt.day) < (dob_dt.month, dob_dt.day))
+            except:
+                age = None
+        ages.append(age)
+
 
         # Ensure radiology_reports is a list
         if not isinstance(radiology_reports, list):
@@ -78,11 +98,22 @@ def create_llm_dataframe(processed_df: pd.DataFrame) -> pd.DataFrame:
         formatted_radiology.append(formatted_data['radiology_text'])
         formatted_progress.append(formatted_data['progress_text'])
 
-    # Build the new DataFrame
+    # Build the new DataFrame with demographics and formatted text
     llm_df = pd.DataFrame({
-        'llm_caseID': processed_df['llm_caseID'].values,  # Use original case IDs!
+        'llm_caseID': processed_df['llm_caseID'].values,
+        'legal_sex': processed_df.get('legal_sex', pd.Series([None] * len(processed_df))).values,
+        'age': ages,
+        'race': processed_df.get('race', pd.Series([None] * len(processed_df))).values,
+        'ethnicity': processed_df.get('ethnicity', pd.Series([None] * len(processed_df))).values,
+        'recent_bmi': processed_df.get('recent_bmi', pd.Series([None] * len(processed_df))).values,
+        'smoking_hx': processed_df.get('smoking_hx', pd.Series([None] * len(processed_df))).values,
+        'alcohol_use': processed_df.get('alcohol_use', pd.Series([None] * len(processed_df))).values,
+        'zipcode': processed_df.get('zipcode', pd.Series([None] * len(processed_df))).values,
+        'insurance_type': processed_df.get('insurance_type', pd.Series([None] * len(processed_df))).values,
+        'occupation': processed_df.get('occupation', pd.Series([None] * len(processed_df))).values,
+        'formatted_progress_text': formatted_progress,
         'formatted_radiology_text': formatted_radiology,
-        'formatted_progress_text': formatted_progress
+
     })
 
     return llm_df
