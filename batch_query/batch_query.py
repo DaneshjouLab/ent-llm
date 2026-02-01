@@ -164,18 +164,13 @@ def quick_status_check(final_llm_df: pd.DataFrame, save_directory: str = '.'):
 
 import asyncio
 import aiohttp
-import openai
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 
-import asyncio
-import aiohttp
-import openai
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import time
+from llm_query.securellm_adapter import query_llm, SecureLLMClient
 
 def parallel_process_llm_cases(llm_df: pd.DataFrame,
-                             api_key: str,
+                             api_key: str = None,
                              max_workers: int = 5,
                              delay_seconds: float = 0.1) -> pd.DataFrame:
     """
@@ -183,7 +178,7 @@ def parallel_process_llm_cases(llm_df: pd.DataFrame,
 
     Args:
         llm_df: DataFrame with cases to process
-        api_key: OpenAI API key
+        api_key: Deprecated. Kept for backward compatibility. SecureLLM uses VAULT_SECRET_KEY.
         max_workers: Number of parallel workers (start with 5)
         delay_seconds: Delay between requests (can be smaller with parallel)
     """
@@ -193,8 +188,6 @@ def parallel_process_llm_cases(llm_df: pd.DataFrame,
         idx, row = row_data
 
         try:
-            client = openai.OpenAI(api_key=api_key)
-
             case_id = row['llm_caseID']
 
             # Generate prompt
@@ -204,8 +197,12 @@ def parallel_process_llm_cases(llm_df: pd.DataFrame,
                 radiology_text=row['formatted_radiology_text']
             )
 
-            # Query OpenAI
-            response = query_openai(prompt, client)
+            # Query SecureLLM
+            response = query_llm(
+                prompt=prompt,
+                system_message="You are an expert otolaryngologist. Provide a surgical recommendation in the requested JSON format.",
+                temperature=0.2
+            )
 
             result = {
                 'index': idx,
@@ -275,11 +272,17 @@ def parallel_process_llm_cases(llm_df: pd.DataFrame,
     return result_df
 
 def fast_batch_processing(final_llm_df: pd.DataFrame,
-                         api_key: str,
+                         api_key: str = None,
                          batch_size: int = 200,
                          max_workers: int = 5) -> pd.DataFrame:
     """
     Fast batch processing with parallel execution.
+
+    Args:
+        final_llm_df: DataFrame with cases to process
+        api_key: Deprecated. Kept for backward compatibility. SecureLLM uses VAULT_SECRET_KEY.
+        batch_size: Number of cases per batch
+        max_workers: Number of parallel workers
     """
 
     # Load existing results

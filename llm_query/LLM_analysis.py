@@ -1,4 +1,3 @@
-import openai
 import pandas as pd
 import json
 import logging
@@ -6,24 +5,28 @@ import time
 from typing import Dict, Any
 from tqdm import tqdm
 
-def query_openai(prompt: str, client) -> str:
-    """Query GPT-4omini for surgical decision based on input prompt."""
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": (
-                    "You are an expert otolaryngologist. "
-                    "Provide a surgical recommendation in the requested JSON format."
-                )},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.2
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        logging.error(f"OpenAI API error: {e}")
-        return None
+from llm_query.securellm_adapter import query_llm, SecureLLMClient
+
+
+def query_openai(prompt: str, client=None) -> str:
+    """
+    Query the LLM for surgical decision based on input prompt.
+
+    This function now uses SecureLLM instead of direct OpenAI calls.
+    The client parameter is kept for backward compatibility but is ignored.
+
+    Args:
+        prompt: The prompt to send to the LLM.
+        client: Deprecated. Kept for backward compatibility.
+
+    Returns:
+        The LLM response content or None on error.
+    """
+    return query_llm(
+        prompt=prompt,
+        system_message="You are an expert otolaryngologist. Provide a surgical recommendation in the requested JSON format.",
+        temperature=0.2
+    )
 
 def generate_prompt(case_id: str, progress_text: str, radiology_text: str) -> str:
     """Generates a structured prompt for the LLM."""
@@ -86,13 +89,13 @@ def parse_llm_response(response: str) -> Dict[str, Any]:
         logging.error(f"Unexpected error parsing response: {e}")
         return default_response
 
-def process_llm_cases(llm_df: pd.DataFrame, api_key: str, delay_seconds: float = 0.2) -> pd.DataFrame:
+def process_llm_cases(llm_df: pd.DataFrame, api_key: str = None, delay_seconds: float = 0.2) -> pd.DataFrame:
     """
-    Process a clean LLM DataFrame through OpenAI API.
+    Process a clean LLM DataFrame through SecureLLM API.
 
     Args:
         llm_df: DataFrame with columns 'llm_caseID', 'formatted_progress_text', 'formatted_radiology_text'
-        api_key: OpenAI API key (hardcoded)
+        api_key: Deprecated. Kept for backward compatibility. SecureLLM uses VAULT_SECRET_KEY.
         delay_seconds: Delay between API calls to avoid rate limiting
 
     Returns:
@@ -102,9 +105,9 @@ def process_llm_cases(llm_df: pd.DataFrame, api_key: str, delay_seconds: float =
     # Setup logging
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-    # Initialize OpenAI client
-    client = openai.OpenAI(api_key=api_key)
-    logging.info("OpenAI client initialized successfully")
+    # Initialize SecureLLM client
+    client = SecureLLMClient()
+    logging.info("SecureLLM client initialized successfully")
 
     # Create a copy of the dataframe
     result_df = llm_df.copy()
@@ -169,13 +172,13 @@ def process_llm_cases(llm_df: pd.DataFrame, api_key: str, delay_seconds: float =
     return result_df
 
 
-def run_llm_analysis(llm_df, api_key):
+def run_llm_analysis(llm_df, api_key: str = None):
     """
     Main function to run the LLM analysis on your DataFrame.
 
     Args:
         llm_df: DataFrame with columns 'llm_caseID', 'formatted_progress_text', 'formatted_radiology_text'
-        api_key: Your OpenAI API key
+        api_key: Deprecated. Kept for backward compatibility. SecureLLM uses VAULT_SECRET_KEY.
 
     Returns:
         DataFrame with LLM analysis results
@@ -185,7 +188,7 @@ def run_llm_analysis(llm_df, api_key):
     print(f"DataFrame columns: {list(llm_df.columns)}")
 
     # Process the cases
-    results_df = process_llm_cases(llm_df, api_key, delay_seconds=0.2)
+    results_df = process_llm_cases(llm_df, delay_seconds=0.2)
 
     # Show summary
     total_cases = len(results_df)

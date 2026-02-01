@@ -1,7 +1,11 @@
 # Formatting for LLM Training Input
 import pandas as pd
 import logging
+import json
+import time
 from typing import Dict, Any, Union, List, Tuple, Optional
+
+from llm_query.securellm_adapter import query_llm, llm_chat, SecureLLMClient
 
 
 def format_medical_data(progress_note: Union[Dict, None], radiology_reports: List[Dict]) -> Dict[str, Any]:
@@ -112,24 +116,25 @@ def training_create_llm_dataframe(processed_df: pd.DataFrame, num_training_rows:
 
     return training_df, test_df
 
-def query_openai(prompt: str, client) -> str:
-    """Query GPT-4 for surgical decision based on input prompt."""
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": (
-                    "You are an expert otolaryngologist. "
-                    "Provide a surgical recommendation in the requested JSON format."
-                )},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.2
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        logging.error(f"OpenAI API error: {e}")
-        return None
+def query_openai(prompt: str, client=None) -> str:
+    """
+    Query the LLM for surgical decision based on input prompt.
+
+    This function now uses SecureLLM instead of direct OpenAI calls.
+    The client parameter is kept for backward compatibility but is ignored.
+
+    Args:
+        prompt: The prompt to send to the LLM.
+        client: Deprecated. Kept for backward compatibility.
+
+    Returns:
+        The LLM response content or None on error.
+    """
+    return query_llm(
+        prompt=prompt,
+        system_message="You are an expert otolaryngologist. Provide a surgical recommendation in the requested JSON format.",
+        temperature=0.2
+    )
 
 def generate_training_examples(sample_cases: pd.DataFrame) -> str:
     """Generate training examples from sample cases."""
@@ -251,13 +256,13 @@ def parse_llm_response(response: str) -> Dict[str, Any]:
         logging.error(f"Unexpected error parsing response: {e}")
         return default_response
 
-def process_llm_cases(llm_df: pd.DataFrame, api_key: str, delay_seconds: float = 1.0) -> pd.DataFrame:
+def process_llm_cases(llm_df: pd.DataFrame, api_key: str = None, delay_seconds: float = 1.0) -> pd.DataFrame:
     """
-    Process a clean LLM DataFrame through OpenAI API.
+    Process a clean LLM DataFrame through SecureLLM API.
 
     Args:
         llm_df: DataFrame with columns 'llm_caseID', 'formatted_progress_text', 'formatted_radiology_text'
-        api_key: OpenAI API key (hardcoded)
+        api_key: Deprecated. Kept for backward compatibility. SecureLLM uses VAULT_SECRET_KEY.
         delay_seconds: Delay between API calls to avoid rate limiting
 
     Returns:
@@ -267,12 +272,12 @@ def process_llm_cases(llm_df: pd.DataFrame, api_key: str, delay_seconds: float =
     # Setup logging
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-    # Initialize OpenAI client
+    # Initialize SecureLLM client
     try:
-        client = openai.OpenAI(api_key=api_key)
-        logging.info("OpenAI client initialized successfully")
+        client = SecureLLMClient()
+        logging.info("SecureLLM client initialized successfully")
     except Exception as e:
-        logging.error(f"Failed to initialize OpenAI client: {e}")
+        logging.error(f"Failed to initialize SecureLLM client: {e}")
         raise
 
     # Create a copy of the dataframe
@@ -326,13 +331,13 @@ def process_llm_cases(llm_df: pd.DataFrame, api_key: str, delay_seconds: float =
     return result_df
 
 
-def run_llm_analysis(llm_df, api_key):
+def run_llm_analysis(llm_df, api_key: str = None):
     """
     Main function to run the LLM analysis on your DataFrame.
 
     Args:
         llm_df: DataFrame with columns 'llm_caseID', 'formatted_progress_text', 'formatted_radiology_text'
-        api_key: Your OpenAI API key
+        api_key: Deprecated. Kept for backward compatibility. SecureLLM uses VAULT_SECRET_KEY.
 
     Returns:
         DataFrame with LLM analysis results
@@ -342,7 +347,7 @@ def run_llm_analysis(llm_df, api_key):
     print(f"DataFrame columns: {list(llm_df.columns)}")
 
     # Process the cases
-    results_df = process_llm_cases(llm_df, api_key, delay_seconds=1.0)
+    results_df = process_llm_cases(llm_df, delay_seconds=1.0)
 
     # Show summary
     total_cases = len(results_df)
@@ -360,37 +365,36 @@ def run_llm_analysis(llm_df, api_key):
     return results_df
 
 
-import pandas as pd
-import logging
-import json
-import time
-import openai
-from typing import Dict, Any, Union, List, Tuple, Optional
-
-
 class ConversationalLLMAnalyzer:
     """
     LLM analyzer that maintains conversation context to avoid repeating training examples.
+    Now uses SecureLLM instead of direct OpenAI calls.
     """
 
-    def __init__(self, api_key: str, model: str = "gpt-4"):
-        self.client = openai.OpenAI(api_key=api_key)
+    def __init__(self, api_key: str = None, model: str = "gpt-4o"):
+        """
+        Initialize the ConversationalLLMAnalyzer.
+
+        Args:
+            api_key: Deprecated. Kept for backward compatibility. SecureLLM uses VAULT_SECRET_KEY.
+            model: Model name to use. Defaults to gpt-4o.
+        """
         self.model = model
         self.conversation_history = []
         self.training_loaded = False
 
     def _make_api_call(self, messages: List[Dict], max_tokens: int = 500) -> str:
-        """Make API call with error handling."""
+        """Make API call with error handling using SecureLLM."""
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
+            response = llm_chat(
                 messages=messages,
                 temperature=0.2,
-                max_tokens=max_tokens
+                max_tokens=max_tokens,
+                model_name=self.model
             )
-            return response.choices[0].message.content
+            return response
         except Exception as e:
-            logging.error(f"OpenAI API error: {e}")
+            logging.error(f"SecureLLM API error: {e}")
             return None
 
     def load_training_examples(self, training_df: pd.DataFrame) -> bool:
@@ -559,14 +563,14 @@ class ConversationalLLMAnalyzer:
 
 
 def process_llm_cases_conversational(test_df: pd.DataFrame, training_df: pd.DataFrame,
-                                   api_key: str, delay_seconds: float = 1.0) -> pd.DataFrame:
+                                   api_key: str = None, delay_seconds: float = 1.0) -> pd.DataFrame:
     """
     Process cases using conversational context approach.
 
     Args:
         test_df: DataFrame with test cases
         training_df: DataFrame with training examples
-        api_key: OpenAI API key
+        api_key: Deprecated. Kept for backward compatibility. SecureLLM uses VAULT_SECRET_KEY.
         delay_seconds: Delay between API calls
 
     Returns:
@@ -576,8 +580,8 @@ def process_llm_cases_conversational(test_df: pd.DataFrame, training_df: pd.Data
     # Setup logging
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-    # Initialize analyzer
-    analyzer = ConversationalLLMAnalyzer(api_key)
+    # Initialize analyzer with SecureLLM
+    analyzer = ConversationalLLMAnalyzer()
 
     # Load training examples
     logging.info(f"Loading {len(training_df)} training examples...")
@@ -630,14 +634,14 @@ def process_llm_cases_conversational(test_df: pd.DataFrame, training_df: pd.Data
     return result_df
 
 
-def run_llm_analysis_training(test_df: pd.DataFrame, training_df: pd.DataFrame, api_key: str):
+def run_llm_analysis_training(test_df: pd.DataFrame, training_df: pd.DataFrame, api_key: str = None):
     """
     Main function to run conversational LLM analysis.
 
     Args:
         test_df: DataFrame with test cases
         training_df: DataFrame with training examples
-        api_key: OpenAI API key
+        api_key: Deprecated. Kept for backward compatibility. SecureLLM uses VAULT_SECRET_KEY.
 
     Returns:
         DataFrame with LLM analysis results
@@ -654,8 +658,8 @@ def run_llm_analysis_training(test_df: pd.DataFrame, training_df: pd.DataFrame, 
     if missing_cols:
         raise ValueError(f"Training DataFrame missing required columns: {missing_cols}")
 
-    # Process cases
-    results_df = process_llm_cases_conversational(test_df, training_df, api_key, delay_seconds=1.0)
+    # Process cases with SecureLLM
+    results_df = process_llm_cases_conversational(test_df, training_df, delay_seconds=1.0)
 
     # Summary
     total_cases = len(results_df)
@@ -673,4 +677,5 @@ def run_llm_analysis_training(test_df: pd.DataFrame, training_df: pd.DataFrame, 
 
     return results_df
 
-results = run_llm_analysis_training(test_df, training_df, api_key)
+# Example usage (uncomment to run):
+# results = run_llm_analysis_training(test_df, training_df)
