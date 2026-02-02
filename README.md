@@ -1,10 +1,9 @@
 <div align="center">
 
-<img src="docs/logo.png" width="100" height="100" alt="Placeholder">
+<img src="docs/logo.png" width="200" height="200" alt="Placeholder">
 
-# ENT-LLM
 
-LLM evaluation of ENT clinical cases for surgical recommendation.
+# LLM evaluation of ENT clinical cases for surgical recommendation
 
 
 
@@ -43,10 +42,10 @@ ent-llm --model apim:gpt-4.1 --input cases.csv --output results.csv
 
 ```bash
 # Extract only 100 patients for testing
-ent-llm-extract --output test_cases.csv --limit 100
+python cli_extract.py --output test_cases.csv --limit 100
 
 # Run analysis
-ent-llm --model apim:claude-3.7 --input test_cases.csv --output test_results.csv
+python cli.py --model apim:claude-3.7 --input test_cases.csv --output test_results.csv
 ```
 
 ## CLI Reference
