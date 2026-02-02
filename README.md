@@ -1,6 +1,14 @@
-# ent-llm
+<div align="center">
+
+<img src="docs/logo.png" width="100" height="100" alt="Placeholder">
+
+# ENT-LLM
 
 LLM evaluation of ENT clinical cases for surgical recommendation.
+
+
+
+</div>
 
 ## Overview
 
