@@ -316,11 +316,23 @@ def run_extraction(
         logger.error(f"Error getting patient count: {e}")
         return pd.DataFrame(), pd.DataFrame()
 
-    all_llm_data = []
-    all_processed_data = []
     global_case_id_counter = 1
     batch_num = 0
+    total_cases = 0
     start_time = time.time()
+    first_batch = True
+
+    def _serialize_for_csv(df: pd.DataFrame) -> pd.DataFrame:
+        """Convert complex columns to JSON strings for CSV compatibility (in-place)."""
+        for col in df.columns:
+            if df[col].dtype == object:
+                try:
+                    df[col] = df[col].apply(
+                        lambda x: str(x) if isinstance(x, (list, dict)) else x
+                    )
+                except Exception:
+                    pass
+        return df
 
     try:
         for patient_batch in processor.get_patient_batches(limit=limit):
@@ -339,14 +351,30 @@ def run_extraction(
                 batch_data, patient_batch, global_case_id_counter
             )
 
-            # Collect results
+            # Write results incrementally to disk
             if not llm_df.empty:
-                all_llm_data.append(llm_df)
-            if not processed_df.empty:
-                all_processed_data.append(processed_df)
+                llm_df.to_csv(
+                    output_file,
+                    mode='w' if first_batch else 'a',
+                    header=first_batch,
+                    index=False
+                )
+                total_cases += len(llm_df)
 
-            # Clean up memory
-            del batch_data
+            if save_processed and processed_output and not processed_df.empty:
+                _serialize_for_csv(processed_df)
+                processed_df.to_csv(
+                    processed_output,
+                    mode='w' if first_batch else 'a',
+                    header=first_batch,
+                    index=False
+                )
+
+            if not llm_df.empty or (save_processed and not processed_df.empty):
+                first_batch = False
+
+            # Clean up memory - free batch objects immediately
+            del batch_data, llm_df, processed_df
             gc.collect()
 
             batch_elapsed = time.time() - batch_start
@@ -357,50 +385,34 @@ def run_extraction(
                 f"Total time: {total_elapsed:.1f}s"
             )
 
-            # Save checkpoint
+            # Save checkpoint (just metadata now, data already on disk)
             if checkpoint_dir and batch_num % checkpoint_interval == 0:
-                checkpoint_path = f"{checkpoint_dir}/checkpoint_batch_{batch_num}.pkl"
-                if all_llm_data:
-                    temp_df = pd.concat(all_llm_data, ignore_index=True)
-                    temp_df.to_pickle(checkpoint_path)
-                    logger.info(f"Checkpoint saved: {checkpoint_path}")
+                checkpoint_path = f"{checkpoint_dir}/checkpoint_batch_{batch_num}.txt"
+                with open(checkpoint_path, 'w') as f:
+                    f.write(f"batch_num={batch_num}\n")
+                    f.write(f"global_case_id_counter={global_case_id_counter}\n")
+                    f.write(f"total_cases={total_cases}\n")
+                logger.info(f"Checkpoint saved: {checkpoint_path}")
 
     except KeyboardInterrupt:
-        logger.warning("Interrupted by user. Saving partial results...")
+        logger.warning("Interrupted by user. Partial results already saved to disk.")
     except Exception as e:
         logger.error(f"Error in extraction: {e}")
         import traceback
         traceback.print_exc()
 
-    # Combine all results
-    if all_llm_data:
-        final_llm_df = pd.concat(all_llm_data, ignore_index=True)
-        final_processed_df = pd.concat(all_processed_data, ignore_index=True) if all_processed_data else pd.DataFrame()
+    total_time = time.time() - start_time
+    logger.info(f"Extraction complete in {total_time:.1f}s ({total_time/60:.1f} min)")
 
-        # Save LLM-ready CSV
-        final_llm_df.to_csv(output_file, index=False)
+    if total_cases > 0:
         logger.info(f"LLM data saved to: {output_file}")
-        logger.info(f"Total cases: {len(final_llm_df)}")
-
-        # Optionally save processed dataframe
+        logger.info(f"Total cases: {total_cases}")
         if save_processed and processed_output:
-            # Convert complex columns to JSON strings for CSV compatibility
-            save_df = final_processed_df.copy()
-            for col in save_df.columns:
-                if save_df[col].dtype == object:
-                    try:
-                        save_df[col] = save_df[col].apply(
-                            lambda x: str(x) if isinstance(x, (list, dict)) else x
-                        )
-                    except Exception:
-                        pass
-            save_df.to_csv(processed_output, index=False)
             logger.info(f"Processed data saved to: {processed_output}")
 
-        total_time = time.time() - start_time
-        logger.info(f"Extraction complete in {total_time:.1f}s ({total_time/60:.1f} min)")
-
-        return final_llm_df, final_processed_df
+        # Return empty DataFrames - data is on disk, not in memory
+        # Caller can read from files if needed
+        return pd.DataFrame(), pd.DataFrame()
     else:
         logger.warning("No data extracted")
         return pd.DataFrame(), pd.DataFrame()
@@ -518,7 +530,7 @@ Examples:
             os.makedirs(args.checkpoint_dir, exist_ok=True)
 
         # Run extraction
-        llm_df, processed_df = run_extraction(
+        run_extraction(
             output_file=args.output,
             batch_size=args.batch_size,
             limit=args.limit,
@@ -528,15 +540,21 @@ Examples:
             checkpoint_dir=args.checkpoint_dir,
         )
 
-        if llm_df.empty:
+        # Check if output file was created and has data
+        import os
+        if not os.path.exists(args.output) or os.path.getsize(args.output) == 0:
             logger.error("No data was extracted")
             return 1
+
+        # Count rows in output file (header + data)
+        with open(args.output, 'r') as f:
+            total_cases = sum(1 for _ in f) - 1  # subtract header
 
         # Print summary
         print(f"\n{'=' * 50}")
         print("EXTRACTION SUMMARY")
         print(f"{'=' * 50}")
-        print(f"Total cases extracted: {len(llm_df)}")
+        print(f"Total cases extracted: {total_cases}")
         print(f"Output file: {args.output}")
         if args.save_processed:
             print(f"Processed file: {args.processed_output}")
