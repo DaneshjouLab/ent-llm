@@ -69,6 +69,7 @@ def run_analysis_with_model(
     delay_seconds: float = 0.2,
     flush_interval: int = 10,
     no_resume: bool = False,
+    start_row: int = 0,
 ) -> pd.DataFrame:
     """
     Run the full LLM analysis pipeline with a specified model.
@@ -80,6 +81,7 @@ def run_analysis_with_model(
         delay_seconds: Delay between API calls.
         flush_interval: Number of cases to process before flushing to disk.
         no_resume: If True, start fresh instead of resuming from existing output.
+        start_row: Start processing from this row index (0-based).
 
     Returns:
         DataFrame with analysis results.
@@ -99,6 +101,13 @@ def run_analysis_with_model(
         missing_cols = [col for col in required_cols if col not in llm_df.columns]
         if missing_cols:
             raise ValueError(f"Input file missing required columns: {missing_cols}")
+
+        # Apply start_row filter
+        if start_row > 0:
+            if start_row >= len(llm_df):
+                raise ValueError(f"start_row ({start_row}) is >= total rows ({len(llm_df)})")
+            logger.info(f"Starting from row {start_row} (skipping first {start_row} rows)")
+            llm_df = llm_df.iloc[start_row:].reset_index(drop=True)
 
         # Run analysis with incremental saving
         results_df = run_llm_analysis(
@@ -198,6 +207,9 @@ Examples:
   # Run with custom flush interval (save every 5 cases)
   python -m cli --model apim:gpt-4.1 -i cases.csv -o results.csv --flush-interval 5
 
+  # Start from a specific row (e.g., skip first 100 rows)
+  python -m cli --model apim:gpt-4.1 -i cases.csv -o results.csv --start-row 100
+
   # Start fresh (don't resume from existing output)
   python -m cli --model apim:gpt-4.1 -i cases.csv -o results.csv --no-resume
 
@@ -255,6 +267,14 @@ Examples:
     )
 
     parser.add_argument(
+        "--start-row",
+        "-s",
+        type=int,
+        default=0,
+        help="Start processing from this row index (0-based, default: 0)",
+    )
+
+    parser.add_argument(
         "--interactive",
         "-I",
         action="store_true",
@@ -302,6 +322,7 @@ Examples:
                 delay_seconds=args.delay,
                 flush_interval=args.flush_interval,
                 no_resume=args.no_resume,
+                start_row=args.start_row,
             )
         return 0
     except KeyboardInterrupt:

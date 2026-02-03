@@ -27,7 +27,8 @@ def query_openai(prompt: str, client=None) -> str:
     return query_llm(
         prompt=prompt,
         system_message="You are an expert otolaryngologist. Provide a surgical recommendation in the requested JSON format.",
-        temperature=0.2
+        temperature=0.2,
+        max_tokens=2048  # Increased to avoid truncation
     )
 
 def generate_prompt(case_id: str, progress_text: str, radiology_text: str) -> str:
@@ -58,7 +59,13 @@ def generate_prompt(case_id: str, progress_text: str, radiology_text: str) -> st
     return prompt
 
 def parse_llm_response(response: str) -> Dict[str, Any]:
-    """Parse LLM response and extract decision, confidence, and reasoning."""
+    """Parse LLM response and extract decision, confidence, and reasoning.
+
+    Handles both complete and truncated JSON responses by attempting
+    regex extraction as a fallback.
+    """
+    import re
+
     default_response = {
         'decision': None,
         'confidence': None,
@@ -68,28 +75,52 @@ def parse_llm_response(response: str) -> Dict[str, Any]:
     if not response:
         return default_response
 
+    # Clean up the response
+    response = response.strip()
+    if response.startswith('```json'):
+        response = response.replace('```json', '').replace('```', '').strip()
+    elif response.startswith('```'):
+        response = response.replace('```', '').strip()
+
+    # Try standard JSON parsing first
     try:
-        # Search JSON in the response
-        response = response.strip()
-        if response.startswith('```json'):
-            response = response.replace('```json', '').replace('```', '').strip()
-        elif response.startswith('```'):
-            response = response.replace('```', '').strip()
-
         parsed = json.loads(response)
-
         return {
             'decision': parsed.get('decision'),
             'confidence': parsed.get('confidence'),
             'reasoning': parsed.get('reasoning', 'No reasoning provided')
         }
-    except json.JSONDecodeError as e:
-        logging.error(f"JSON parsing error: {e}")
-        logging.error(f"Response was: {response}")
-        return default_response
-    except Exception as e:
-        logging.error(f"Unexpected error parsing response: {e}")
-        return default_response
+    except json.JSONDecodeError:
+        pass  # Fall through to regex extraction
+
+    # Fallback: extract values using regex for truncated/malformed JSON
+    result = default_response.copy()
+
+    # Extract decision
+    decision_match = re.search(r'"decision"\s*:\s*"(Yes|No)"', response, re.IGNORECASE)
+    if decision_match:
+        result['decision'] = decision_match.group(1).capitalize()
+
+    # Extract confidence
+    confidence_match = re.search(r'"confidence"\s*:\s*(\d+)', response)
+    if confidence_match:
+        result['confidence'] = int(confidence_match.group(1))
+
+    # Extract reasoning
+    reasoning_match = re.search(r'"reasoning"\s*:\s*"([^"]*)"', response)
+    if reasoning_match:
+        result['reasoning'] = reasoning_match.group(1)
+    elif result['decision']:
+        result['reasoning'] = 'Response was truncated'
+
+    # Log if we had to use fallback
+    if result['decision'] or result['confidence']:
+        logging.warning(f"Used regex fallback to parse truncated response")
+    else:
+        logging.error(f"JSON parsing error - could not extract any values")
+        logging.error(f"Response was: {response[:200]}...")
+
+    return result
 
 def _load_processed_case_ids(output_file: Optional[str]) -> Set[str]:
     """Load already processed case IDs from existing output file."""
