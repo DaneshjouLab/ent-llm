@@ -15,20 +15,25 @@ response. The default model used is GPT-4o with secure key management via VAULT_
 # Standard library imports
 import os
 import logging
+import time
 from typing import List, Dict, Any, Optional
 
 # Third party imports
 from dotenv import load_dotenv
+import requests
 
 logger = logging.getLogger(__name__)
 
 # Try to import securellm
 try:
-    from securellm import get_llm_client
+    from securellm.providers.apim import SecureLLMClient as ApimClient
+    from securellm.providers.registry import SECURE_MODEL_REGISTRY
     _SECURELLM_AVAILABLE = True
 except ImportError:
     logger.warning("securellm package not available, using fallback mode")
     _SECURELLM_AVAILABLE = False
+    ApimClient = None
+    SECURE_MODEL_REGISTRY = {}
 
 
 class ModelConfig:  # pylint: disable=too-few-public-methods
@@ -37,6 +42,9 @@ class ModelConfig:  # pylint: disable=too-few-public-methods
     """
     DEFAULT_LLM_MODEL = "apim:gpt-4.1"
     VAULT_SECRET_KEY = "VAULT_SECRET_KEY"
+    DEFAULT_TIMEOUT = 120  # seconds (increased for Gemini and other slow models)
+    MAX_RETRIES = 3
+    RETRY_DELAY = 5  # seconds
 
 
 def _initialize_secure_client():
@@ -62,19 +70,35 @@ def _initialize_secure_client():
     return vault_key
 
 
-def get_llm_client_instance(model_name: Optional[str] = None):
+def get_llm_client_instance(model_name: Optional[str] = None, timeout: int = None):
     """
-    Get or create the SecureLLM client instance.
+    Get or create the SecureLLM client instance with custom timeout.
 
     Args:
         model_name: Optional model name override. Defaults to ModelConfig.DEFAULT_LLM_MODEL.
+        timeout: Request timeout in seconds. Defaults to ModelConfig.DEFAULT_TIMEOUT.
 
     Returns:
         SecureLLM client instance
     """
-    _initialize_secure_client()  # Verify key is available
+    api_key = _initialize_secure_client()  # Verify key is available and get it
     model = model_name or ModelConfig.DEFAULT_LLM_MODEL
-    return get_llm_client(model_name=model)
+    timeout = timeout or ModelConfig.DEFAULT_TIMEOUT
+
+    # Get model config from registry
+    config = SECURE_MODEL_REGISTRY.get(model)
+    if not config:
+        raise ValueError(f"Unknown model name: {model}")
+
+    # Create client with custom timeout
+    return ApimClient(
+        base_url=config["base_url"],
+        api_key=api_key,
+        model_name=model,
+        model_id=config["model_id"],
+        api_version=config.get("api_version"),
+        timeout=timeout
+    )
 
 
 def llm_call(prompt: str, temperature: float = 0.7, max_tokens: int = 10000) -> str:
@@ -93,36 +117,27 @@ def llm_call(prompt: str, temperature: float = 0.7, max_tokens: int = 10000) -> 
         ImportError: If securellm is not installed
         ValueError: If VAULT_SECRET_KEY is not set
     """
-    if not _SECURELLM_AVAILABLE:
-        raise ImportError("securellm package not installed. Install with: pip install -e .")
-
-    client = get_llm_client_instance()
-
-    # Build generation config
-    config = {
-        "temperature": temperature,
-        "max_tokens": max_tokens
-    }
-
     messages = [{"role": "user", "content": prompt}]
-
-    # SecureLLM client uses generate() method and returns parsed content directly
-    response = client.generate(messages, generation_config=config)
-
-    return response.strip() if isinstance(response, str) else str(response).strip()
+    response = llm_chat(messages, temperature=temperature, max_tokens=max_tokens)
+    if response is None:
+        raise RuntimeError("LLM call failed after retries")
+    return response
 
 
 def llm_chat(
     messages: List[Dict[str, str]],
     temperature: float = 0.2,
     max_tokens: int = 500,
-    model_name: Optional[str] = None
+    model_name: Optional[str] = None,
+    timeout: int = None,
+    max_retries: int = None
 ) -> Optional[str]:
     """
     Sends a chat conversation to the LLM and returns the generated response.
 
     This function supports system messages and multi-turn conversations,
     making it suitable for the ENT surgical recommendation use case.
+    Includes retry logic for timeout and connection errors.
 
     Args:
         messages: List of message dictionaries with 'role' and 'content' keys.
@@ -130,6 +145,8 @@ def llm_chat(
         temperature: Sampling temperature for response variation. Default 0.2 for consistency.
         max_tokens: Maximum number of tokens in the model's response.
         model_name: Optional model name override.
+        timeout: Request timeout in seconds. Defaults to ModelConfig.DEFAULT_TIMEOUT.
+        max_retries: Maximum retry attempts for timeout errors. Defaults to ModelConfig.MAX_RETRIES.
 
     Returns:
         str: The content of the LLM's response, or None if an error occurred.
@@ -148,24 +165,43 @@ def llm_chat(
     if not _SECURELLM_AVAILABLE:
         raise ImportError("securellm package not installed. Install with: pip install -e .")
 
-    try:
-        model = model_name or ModelConfig.DEFAULT_LLM_MODEL
-        client = get_llm_client_instance(model)
+    model = model_name or ModelConfig.DEFAULT_LLM_MODEL
+    timeout = timeout or ModelConfig.DEFAULT_TIMEOUT
+    max_retries = max_retries if max_retries is not None else ModelConfig.MAX_RETRIES
 
-        # Build generation config
-        config = {
-            "temperature": temperature,
-            "max_tokens": max_tokens
-        }
+    # Build generation config
+    config = {
+        "temperature": temperature,
+        "max_tokens": max_tokens
+    }
 
-        # SecureLLM client uses generate() method and returns parsed content directly
-        response = client.generate(messages, generation_config=config)
+    last_error = None
+    for attempt in range(max_retries + 1):
+        try:
+            client = get_llm_client_instance(model, timeout=timeout)
 
-        return response.strip() if isinstance(response, str) else str(response).strip()
+            # SecureLLM client uses generate() method and returns parsed content directly
+            response = client.generate(messages, generation_config=config)
 
-    except Exception as e:
-        logger.error(f"SecureLLM API error: {e}")
-        return None
+            return response.strip() if isinstance(response, str) else str(response).strip()
+
+        except (TimeoutError, requests.exceptions.Timeout, requests.exceptions.ReadTimeout,
+                requests.exceptions.ConnectionError) as e:
+            last_error = e
+            if attempt < max_retries:
+                wait_time = ModelConfig.RETRY_DELAY * (attempt + 1)
+                logger.warning(f"Request failed (attempt {attempt + 1}/{max_retries + 1}): {type(e).__name__}. "
+                             f"Retrying in {wait_time}s...")
+                time.sleep(wait_time)
+            else:
+                logger.error(f"Request failed after {max_retries + 1} attempts: {e}")
+
+        except Exception as e:
+            logger.error(f"SecureLLM API error: {e}")
+            return None
+
+    logger.error(f"All retry attempts exhausted. Last error: {last_error}")
+    return None
 
 
 def query_llm(
