@@ -24,23 +24,18 @@ logger = logging.getLogger(__name__)
 
 # Try to import securellm
 try:
-    from securellm import get_llm_client, get_default_generation_config
+    from securellm import get_llm_client
     _SECURELLM_AVAILABLE = True
 except ImportError:
     logger.warning("securellm package not available, using fallback mode")
     _SECURELLM_AVAILABLE = False
 
 
-def extract_response_content(response) -> str:
-    """Extract content from SecureLLM response."""
-    return response["choices"][0]["message"]["content"]
-
-
 class ModelConfig:  # pylint: disable=too-few-public-methods
     """
     Configuration constants for the LLM interaction using SecureLLM.
     """
-    DEFAULT_LLM_MODEL = "gpt-4o"
+    DEFAULT_LLM_MODEL = "apim:gpt-4.1"
     VAULT_SECRET_KEY = "VAULT_SECRET_KEY"
 
 
@@ -95,7 +90,7 @@ def llm_call(prompt: str, temperature: float = 0.7, max_tokens: int = 10000) -> 
         str: The content of the LLM's response.
 
     Raises:
-        ImportError: If secure-llm is not installed
+        ImportError: If securellm is not installed
         ValueError: If VAULT_SECRET_KEY is not set
     """
     if not _SECURELLM_AVAILABLE:
@@ -103,19 +98,18 @@ def llm_call(prompt: str, temperature: float = 0.7, max_tokens: int = 10000) -> 
 
     client = get_llm_client_instance()
 
-    # Get default configuration and override with provided parameters
-    config = get_default_generation_config({
+    # Build generation config
+    config = {
         "temperature": temperature,
         "max_tokens": max_tokens
-    })
+    }
 
-    response = client.chat.completions.create(
-        model=ModelConfig.DEFAULT_LLM_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        **config
-    )
+    messages = [{"role": "user", "content": prompt}]
 
-    return extract_response_content(response).strip()
+    # SecureLLM client uses generate() method and returns parsed content directly
+    response = client.generate(messages, generation_config=config)
+
+    return response.strip() if isinstance(response, str) else str(response).strip()
 
 
 def llm_chat(
@@ -141,7 +135,7 @@ def llm_chat(
         str: The content of the LLM's response, or None if an error occurred.
 
     Raises:
-        ImportError: If secure-llm is not installed
+        ImportError: If securellm is not installed
         ValueError: If VAULT_SECRET_KEY is not set
 
     Example:
@@ -158,19 +152,16 @@ def llm_chat(
         model = model_name or ModelConfig.DEFAULT_LLM_MODEL
         client = get_llm_client_instance(model)
 
-        # Get default configuration and override with provided parameters
-        config = get_default_generation_config({
+        # Build generation config
+        config = {
             "temperature": temperature,
             "max_tokens": max_tokens
-        })
+        }
 
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            **config
-        )
+        # SecureLLM client uses generate() method and returns parsed content directly
+        response = client.generate(messages, generation_config=config)
 
-        return extract_response_content(response).strip()
+        return response.strip() if isinstance(response, str) else str(response).strip()
 
     except Exception as e:
         logger.error(f"SecureLLM API error: {e}")
