@@ -22,15 +22,18 @@ from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
-# Try to import secure-llm
+# Try to import securellm
 try:
-    from src.safran.tools.llm.secure_llm_client import (
-        get_llm_client, extract_response_content, get_default_generation_config
-    )
+    from securellm import get_llm_client, get_default_generation_config
     _SECURELLM_AVAILABLE = True
 except ImportError:
-    logger.warning("secure-llm client not available, using fallback mode")
+    logger.warning("securellm package not available, using fallback mode")
     _SECURELLM_AVAILABLE = False
+
+
+def extract_response_content(response) -> str:
+    """Extract content from SecureLLM response."""
+    return response["choices"][0]["message"]["content"]
 
 
 class ModelConfig:  # pylint: disable=too-few-public-methods
@@ -51,7 +54,7 @@ def _initialize_secure_client():
     load_dotenv()
 
     if not _SECURELLM_AVAILABLE:
-        raise ImportError("secure-llm package not installed. Install with: pip install secure-llm")
+        raise ImportError("securellm package not installed. Install with: pip install -e .")
 
     vault_key = os.getenv(ModelConfig.VAULT_SECRET_KEY)
     if not vault_key:
@@ -96,7 +99,7 @@ def llm_call(prompt: str, temperature: float = 0.7, max_tokens: int = 10000) -> 
         ValueError: If VAULT_SECRET_KEY is not set
     """
     if not _SECURELLM_AVAILABLE:
-        raise ImportError("secure-llm package not installed. Install with: pip install secure-llm")
+        raise ImportError("securellm package not installed. Install with: pip install -e .")
 
     client = get_llm_client_instance()
 
@@ -149,7 +152,7 @@ def llm_chat(
         >>> response = llm_chat(messages)
     """
     if not _SECURELLM_AVAILABLE:
-        raise ImportError("secure-llm package not installed. Install with: pip install secure-llm")
+        raise ImportError("securellm package not installed. Install with: pip install -e .")
 
     try:
         model = model_name or ModelConfig.DEFAULT_LLM_MODEL

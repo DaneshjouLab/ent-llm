@@ -15,6 +15,15 @@
 
 ## Installation
 
+### Create Virtual Environment
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
+
+### Install Dependencies
+
 ```bash
 pip install -e .
 ```
