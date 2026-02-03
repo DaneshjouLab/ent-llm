@@ -67,6 +67,8 @@ def run_analysis_with_model(
     input_file: Optional[str] = None,
     output_file: Optional[str] = None,
     delay_seconds: float = 0.2,
+    flush_interval: int = 10,
+    no_resume: bool = False,
 ) -> pd.DataFrame:
     """
     Run the full LLM analysis pipeline with a specified model.
@@ -74,8 +76,10 @@ def run_analysis_with_model(
     Args:
         model: The model identifier to use.
         input_file: Path to input CSV file with case data.
-        output_file: Path to save results CSV.
+        output_file: Path to save results CSV (saved incrementally).
         delay_seconds: Delay between API calls.
+        flush_interval: Number of cases to process before flushing to disk.
+        no_resume: If True, start fresh instead of resuming from existing output.
 
     Returns:
         DataFrame with analysis results.
@@ -96,10 +100,15 @@ def run_analysis_with_model(
         if missing_cols:
             raise ValueError(f"Input file missing required columns: {missing_cols}")
 
-        results_df = run_llm_analysis(llm_df)
+        # Run analysis with incremental saving
+        results_df = run_llm_analysis(
+            llm_df,
+            output_file=output_file,
+            flush_interval=flush_interval,
+            resume=not no_resume
+        )
 
         if output_file:
-            results_df.to_csv(output_file, index=False)
             logger.info(f"Results saved to: {output_file}")
 
         return results_df
@@ -183,8 +192,14 @@ Examples:
   # Run analysis with default model (demo mode)
   python -m cli --model apim:gpt-4.1
 
-  # Run analysis on a CSV file
+  # Run analysis on a CSV file (saves incrementally every 10 cases)
   python -m cli --model apim:claude-3.7 --input cases.csv --output results.csv
+
+  # Run with custom flush interval (save every 5 cases)
+  python -m cli --model apim:gpt-4.1 -i cases.csv -o results.csv --flush-interval 5
+
+  # Start fresh (don't resume from existing output)
+  python -m cli --model apim:gpt-4.1 -i cases.csv -o results.csv --no-resume
 
   # Interactive query mode
   python -m cli --model apim:llama-3.3-70b --interactive
@@ -223,6 +238,20 @@ Examples:
         type=float,
         default=0.2,
         help="Delay in seconds between API calls (default: 0.2)",
+    )
+
+    parser.add_argument(
+        "--flush-interval",
+        "-f",
+        type=int,
+        default=10,
+        help="Number of cases to process before flushing to disk (default: 10)",
+    )
+
+    parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="Start fresh instead of resuming from existing output file",
     )
 
     parser.add_argument(
@@ -271,6 +300,8 @@ Examples:
                 input_file=args.input,
                 output_file=args.output,
                 delay_seconds=args.delay,
+                flush_interval=args.flush_interval,
+                no_resume=args.no_resume,
             )
         return 0
     except KeyboardInterrupt:
