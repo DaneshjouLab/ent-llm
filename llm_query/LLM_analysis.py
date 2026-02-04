@@ -245,20 +245,37 @@ def process_llm_cases(
                 radiology_text=row['formatted_radiology_text']
             )
 
-            # Query LLM
-            response = query_openai(prompt, client)
-            result['api_response'] = response
+            # Retry loop for failed responses or failed decision extraction
+            max_attempts = 5
+            for attempt in range(1, max_attempts + 1):
+                # Query LLM
+                response = query_openai(prompt, client)
+                result['api_response'] = response
 
-            if response:
-                # Parse response
-                parsed = parse_llm_response(response)
-                result['decision'] = parsed['decision']
-                result['confidence'] = parsed['confidence']
-                result['reasoning'] = parsed['reasoning']
+                if response:
+                    # Parse response
+                    parsed = parse_llm_response(response)
+                    result['decision'] = parsed['decision']
+                    result['confidence'] = parsed['confidence']
+                    result['reasoning'] = parsed['reasoning']
 
-                logging.info(f"✓ Case {case_id}: {parsed['decision']} (confidence: {parsed['confidence']})")
+                    # Success if we got a decision
+                    if parsed['decision'] is not None:
+                        logging.info(f"✓ Case {case_id}: {parsed['decision']} (confidence: {parsed['confidence']})")
+                        break
+                    else:
+                        logging.warning(f"✗ Attempt {attempt}/{max_attempts}: Could not extract decision for case {case_id}")
+                else:
+                    logging.warning(f"✗ Attempt {attempt}/{max_attempts}: No response for case {case_id}")
+
+                # Retry delay (increasing backoff)
+                if attempt < max_attempts:
+                    retry_delay = 2 * attempt
+                    logging.info(f"Retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
             else:
-                logging.warning(f"✗ No response for case {case_id}")
+                # All attempts exhausted
+                logging.error(f"✗ Failed to get valid response for case {case_id} after {max_attempts} attempts")
 
         except Exception as e:
             logging.error(f"Error processing case {case_id}: {e}")

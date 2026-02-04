@@ -193,7 +193,20 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
-.DS_Store.DS_Store
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+.AppleDouble
+.LSOverride
+Icon?
+.DocumentRevisions-V100
+.fseventsd
+.TemporaryItems
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
 
 **/data/**
 **/logs/**
