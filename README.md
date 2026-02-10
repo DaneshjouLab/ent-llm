@@ -135,6 +135,55 @@ ent-llm --model apim:gpt-4.1 --interactive
 ent-llm --model apim:gpt-4.1
 ```
 
+### `ent-llm-ablation` - Demographic Ablation Analysis
+
+Measures how demographic variables influence LLM surgical recommendations by selectively excluding demographics from prompts.
+
+```bash
+ent-llm-ablation [OPTIONS]
+```
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--model` | `-m` | LLM model to use (default: `apim:gpt-4.1`) |
+| `--input` | `-i` | Input CSV file (clinical text + demographics) |
+| `--output-dir` | `-o` | Output directory for result CSVs (default: `./ablation_results`) |
+| `--baseline` | `-b` | Path to pre-computed baseline CSV (skip baseline run) |
+| `--experiments` | `-e` | Which to run: `all`, `individual`, `grouped`, `baseline-only` |
+| `--sample-size` | `-n` | Stratified sample size |
+| `--max-tokens` | | Filter out cases exceeding estimated token count |
+| `--ground-truth` | `-g` | Ground truth column name (default: `had_surgery`) |
+| `--delay` | `-d` | Delay between API calls (default: 0.2s) |
+| `--flush-interval` | `-f` | Incremental save interval (default: 10) |
+| `--no-resume` | | Start fresh instead of resuming |
+| `--list-experiments` | | List all experiments and exit |
+| `--verbose` | `-v` | Enable verbose logging |
+
+**Input CSV** requires the same clinical columns as `ent-llm` plus demographic columns: `legal_sex`, `age`, `race`, `ethnicity`, `recent_bmi`, `smoking_hx`, `alcohol_use`, `zipcode`, `insurance_type`, `occupation`. Optionally includes a ground truth column (e.g. `had_surgery`) for accuracy analysis.
+
+**Experiments** (16 total):
+- **Baseline** — all demographics included
+- **10 individual ablations** — exclude one variable at a time (`no_legal_sex`, `no_age`, etc.)
+- **5 grouped ablations** — exclude variable groups (`no_protected_attributes`, `no_socioeconomic`, `no_health_behaviors`, `no_physical_attributes`, `no_all_demographics`)
+
+**Examples:**
+
+```bash
+# List all experiments
+ent-llm-ablation --list-experiments
+
+# Run full ablation on a stratified sample of 500 cases
+ent-llm-ablation -m apim:gpt-4.1 -i cases_with_demographics.csv -n 500
+
+# Filter long cases and run only individual ablations
+ent-llm-ablation -m apim:claude-3.7 -i data.csv --max-tokens 5000 -e individual
+
+# Resume with a pre-computed baseline
+ent-llm-ablation -m apim:gpt-4.1 -i data.csv -b ./ablation_results/baseline_results.csv
+```
+
+**Output:** Each experiment saves to `{output_dir}/{experiment_name}_results.csv`. A summary comparing all experiments to baseline is saved to `{output_dir}/ablation_summary.csv` with flip rates, confidence changes, and (if ground truth provided) accuracy metrics.
+
 ## Data Pipeline
 
 ```
@@ -223,6 +272,7 @@ ent-llm --model apim:gpt-4.1
 ent-llm/
 ├── cli.py                    # LLM analysis CLI
 ├── cli_extract.py            # Data extraction CLI
+├── cli_ablation.py           # Demographic ablation CLI
 ├── data_extraction/          # BigQuery data processing
 │   ├── config.py             # Project settings, CPT codes
 │   ├── raw_data_parsing.py   # Data extraction functions
@@ -230,6 +280,7 @@ ent-llm/
 ├── llm_query/                # LLM integration
 │   ├── securellm_adapter.py  # SecureLLM client wrapper
 │   ├── LLM_analysis.py       # Analysis pipeline
+│   ├── ablation_analysis.py  # Ablation experiment logic
 │   └── llm_input.py          # Data formatting
 ├── batch_query/              # Batch processing
 ├── evaluation/               # Results evaluation

@@ -31,6 +31,7 @@ dev = [
 [project.scripts]
 ent-llm = "cli:main"
 ent-llm-extract = "cli_extract:main"
+ent-llm-ablation = "cli_ablation:main"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
