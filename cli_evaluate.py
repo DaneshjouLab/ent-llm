@@ -418,47 +418,36 @@ def plot_case_count_by_confidence(all_merged: dict[str, pd.DataFrame], plot_dir:
     print(f"  Saved: {path}")
 
 
-def plot_surgery_rate_by_confidence(all_merged: dict[str, pd.DataFrame], plot_dir: str) -> None:
-    """Grouped bar chart: predicted surgery rate vs actual rate at each confidence level."""
-    conf_range = range(1, 11)
+def plot_surgery_rates(all_merged: dict[str, pd.DataFrame], plot_dir: str) -> None:
+    """Grouped bar chart: predicted vs actual surgery rate for all models on one plot."""
+    models = {_model_short_name(label): merged for label, merged in all_merged.items()}
+    model_names = list(models.keys())
 
-    for label, merged in all_merged.items():
-        name = _model_short_name(label)
-        pred_rates = []
-        actual_rates = []
-        valid_conf = []
+    pred_rates = [m["predicted"].mean() for m in models.values()]
+    actual_rates = [m["actual"].mean() for m in models.values()]
 
-        for c in conf_range:
-            subset = merged[merged["confidence"] == c]
-            if len(subset) == 0:
-                continue
-            valid_conf.append(c)
-            pred_rates.append(subset["predicted"].mean())
-            actual_rates.append(subset["actual"].mean())
+    x = np.arange(len(model_names))
+    width = 0.3
 
-        x = np.arange(len(valid_conf))
-        width = 0.35
+    fig, ax = plt.subplots(figsize=(8, 5))
+    bars1 = ax.bar(x - width / 2, pred_rates, width, label="Predicted Surgery Rate", color="#2196F3")
+    bars2 = ax.bar(x + width / 2, actual_rates, width, label="Actual Surgery Rate", color="#FF9800")
+    _add_bar_labels(ax, bars1)
+    _add_bar_labels(ax, bars2)
 
-        fig, ax = plt.subplots(figsize=(10, 5))
-        bars1 = ax.bar(x - width / 2, pred_rates, width, label="Predicted Surgery Rate", color="#2196F3")
-        bars2 = ax.bar(x + width / 2, actual_rates, width, label="Actual Surgery Rate", color="#FF9800")
-        _add_bar_labels(ax, bars1)
-        _add_bar_labels(ax, bars2)
+    ax.set_xticks(x)
+    ax.set_xticklabels(model_names)
+    ax.set_ylabel("Rate")
+    ax.set_ylim(0, max(max(pred_rates), max(actual_rates)) * 1.25)
+    ax.set_title("Predicted vs Actual Surgery Rate by Model")
+    ax.legend()
+    ax.grid(axis="y", alpha=0.3)
 
-        ax.set_xticks(x)
-        ax.set_xticklabels([str(c) for c in valid_conf])
-        ax.set_xlabel("Confidence Score")
-        ax.set_ylabel("Rate")
-        ax.set_ylim(0, 1.12)
-        ax.set_title(f"Predicted vs Actual Surgery Rate by Confidence: {name}")
-        ax.legend()
-        ax.grid(axis="y", alpha=0.3)
-
-        fig.tight_layout()
-        path = os.path.join(plot_dir, f"barplot_surgery_rate_{name}.png")
-        fig.savefig(path, dpi=150, bbox_inches="tight")
-        plt.close(fig)
-        print(f"  Saved: {path}")
+    fig.tight_layout()
+    path = os.path.join(plot_dir, "barplot_surgery_rates.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {path}")
 
 
 def plot_accuracy_by_confidence(all_merged: dict[str, pd.DataFrame], plot_dir: str) -> None:
@@ -656,7 +645,7 @@ def generate_all_plots(all_merged: dict[str, pd.DataFrame], all_metrics: list[di
     plot_metrics_by_confidence_bin(all_merged, plot_dir)
     plot_accuracy_by_confidence_bars(all_merged, plot_dir)
     plot_case_count_by_confidence(all_merged, plot_dir)
-    plot_surgery_rate_by_confidence(all_merged, plot_dir)
+    plot_surgery_rates(all_merged, plot_dir)
 
     # Other plots
     plot_confusion_matrices(all_merged, plot_dir)
