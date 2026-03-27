@@ -1,0 +1,16 @@
+experiment,experiment_type,excluded,total_cases,decision_flips,flip_rate_%,yes_to_no,no_to_yes,avg_confidence_change,avg_abs_confidence_change
+no_legal_sex,individual,legal_sex,985,29,2.94,17,12,0.001,0.066
+no_all_demographics,grouped,all_demographics,985,25,2.54,16,9,-0.183,0.221
+no_physical_attributes,grouped,physical_attributes,985,23,2.34,11,12,0.005,0.076
+no_recent_bmi,individual,recent_bmi,985,23,2.34,12,11,0.007,0.072
+no_ethnicity,individual,ethnicity,985,22,2.23,13,9,0.007,0.072
+no_insurance_type,individual,insurance_type,985,22,2.23,13,9,0.014,0.063
+no_socioeconomic,grouped,socioeconomic,985,22,2.23,12,10,-0.006,0.077
+no_health_behaviors,grouped,health_behaviors,985,21,2.13,10,11,0.01,0.067
+no_smoking_hx,individual,smoking_hx,985,20,2.03,9,11,0.01,0.053
+no_zipcode,individual,zipcode,985,20,2.03,11,9,0.003,0.066
+no_protected_attributes,grouped,protected_attributes,985,19,1.93,7,12,0.008,0.063
+no_race,individual,race,985,18,1.83,11,7,0.019,0.07
+no_age,individual,age,985,16,1.62,6,10,0.0,0.059
+no_occupation,individual,occupation,985,16,1.62,7,9,-0.002,0.063
+no_alcohol_use,individual,alcohol_use,985,13,1.32,7,6,0.0,0.059

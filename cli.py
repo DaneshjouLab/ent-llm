@@ -70,6 +70,7 @@ def run_analysis_with_model(
     flush_interval: int = 10,
     no_resume: bool = False,
     start_row: int = 0,
+    end_row: Optional[int] = None,
 ) -> pd.DataFrame:
     """
     Run the full LLM analysis pipeline with a specified model.
@@ -102,12 +103,16 @@ def run_analysis_with_model(
         if missing_cols:
             raise ValueError(f"Input file missing required columns: {missing_cols}")
 
-        # Apply start_row filter
-        if start_row > 0:
-            if start_row >= len(llm_df):
-                raise ValueError(f"start_row ({start_row}) is >= total rows ({len(llm_df)})")
-            logger.info(f"Starting from row {start_row} (skipping first {start_row} rows)")
-            llm_df = llm_df.iloc[start_row:].reset_index(drop=True)
+        # Apply row range filter
+        total_rows = len(llm_df)
+        if start_row > 0 or end_row is not None:
+            if start_row >= total_rows:
+                raise ValueError(f"start_row ({start_row}) is >= total rows ({total_rows})")
+            if end_row is not None and end_row <= start_row:
+                raise ValueError(f"end_row ({end_row}) must be greater than start_row ({start_row})")
+            actual_end = min(end_row, total_rows) if end_row is not None else total_rows
+            logger.info(f"Processing rows {start_row} to {actual_end - 1} (of {total_rows} total)")
+            llm_df = llm_df.iloc[start_row:actual_end].reset_index(drop=True)
 
         # Run analysis with incremental saving
         results_df = run_llm_analysis(
@@ -210,6 +215,10 @@ Examples:
   # Start from a specific row (e.g., skip first 100 rows)
   python -m cli --model apim:gpt-4.1 -i cases.csv -o results.csv --start-row 100
 
+  # Process a range of rows (for parallel execution)
+  python -m cli -m apim:gpt-4.1 -i cases.csv -o results_0_500.csv -s 0 -e 500
+  python -m cli -m apim:gpt-4.1 -i cases.csv -o results_500_1000.csv -s 500 -e 1000
+
   # Start fresh (don't resume from existing output)
   python -m cli --model apim:gpt-4.1 -i cases.csv -o results.csv --no-resume
 
@@ -275,6 +284,14 @@ Examples:
     )
 
     parser.add_argument(
+        "--end-row",
+        "-e",
+        type=int,
+        default=None,
+        help="Stop processing at this row index (exclusive, 0-based). If omitted, processes to the end.",
+    )
+
+    parser.add_argument(
         "--interactive",
         "-I",
         action="store_true",
@@ -323,6 +340,7 @@ Examples:
                 flush_interval=args.flush_interval,
                 no_resume=args.no_resume,
                 start_row=args.start_row,
+                end_row=args.end_row,
             )
         return 0
     except KeyboardInterrupt:

@@ -159,7 +159,26 @@ ent-llm-ablation [OPTIONS]
 | `--list-experiments` | | List all experiments and exit |
 | `--verbose` | `-v` | Enable verbose logging |
 
-**Input CSV** requires the same clinical columns as `ent-llm` plus demographic columns: `legal_sex`, `age`, `race`, `ethnicity`, `recent_bmi`, `smoking_hx`, `alcohol_use`, `zipcode`, `insurance_type`, `occupation`. Optionally includes a ground truth column (e.g. `had_surgery`) for accuracy analysis.
+**Input CSV** — a single file containing both clinical text and demographic columns:
+
+| Column | Required | Description |
+|--------|----------|-------------|
+| `llm_caseID` | Yes | Unique case identifier |
+| `formatted_progress_text` | Yes | Concatenated ENT clinical notes |
+| `formatted_radiology_text` | Yes | Concatenated radiology reports |
+| `legal_sex` | At least one | Patient sex |
+| `age` | demographic | Patient age |
+| `race` | column | Patient race |
+| `ethnicity` | must be | Patient ethnicity |
+| `recent_bmi` | present | Most recent BMI |
+| `smoking_hx` | | Smoking history |
+| `alcohol_use` | | Alcohol use |
+| `zipcode` | | Patient zipcode |
+| `insurance_type` | | Insurance type |
+| `occupation` | | Patient occupation |
+| `had_surgery` | Optional | Ground truth for accuracy analysis |
+
+The prepared input file `data/sample_with_demo_patient_id.csv` contains all required columns.
 
 **Experiments** (16 total):
 - **Baseline** — all demographics included
@@ -172,14 +191,17 @@ ent-llm-ablation [OPTIONS]
 # List all experiments
 ent-llm-ablation --list-experiments
 
-# Run full ablation on a stratified sample of 500 cases
-ent-llm-ablation -m apim:gpt-4.1 -i cases_with_demographics.csv -n 500
+# Run full ablation study
+ent-llm-ablation -m apim:gpt-4.1 -i data/sample_with_demo_patient_id.csv
+
+# Run on a stratified sample of 500 cases
+ent-llm-ablation -m apim:gpt-4.1 -i data/sample_with_demo_patient_id.csv -n 500
 
 # Filter long cases and run only individual ablations
-ent-llm-ablation -m apim:claude-3.7 -i data.csv --max-tokens 5000 -e individual
+ent-llm-ablation -m apim:claude-3.7 -i data/sample_with_demo_patient_id.csv --max-tokens 5000 -e individual
 
 # Resume with a pre-computed baseline
-ent-llm-ablation -m apim:gpt-4.1 -i data.csv -b ./ablation_results/baseline_results.csv
+ent-llm-ablation -m apim:gpt-4.1 -i data/sample_with_demo_patient_id.csv -b ./ablation_results/baseline_results.csv
 ```
 
 **Output:** Each experiment saves to `{output_dir}/{experiment_name}_results.csv`. A summary comparing all experiments to baseline is saved to `{output_dir}/ablation_summary.csv` with flip rates, confidence changes, and (if ground truth provided) accuracy metrics.
