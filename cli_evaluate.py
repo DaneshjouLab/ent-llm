@@ -37,7 +37,7 @@ from sklearn.metrics import (
 
 DEFAULT_GROUND_TRUTH = "data/processed_data_20260202.csv"
 DEFAULT_PREDICTIONS_DIR = "data/decision_results/final"
-DEFAULT_PLOT_DIR = "evaluation_plots"
+DEFAULT_PLOT_DIR = "data/evaluation_plots"
 
 CONFIDENCE_BINS = {
     "Low (1-4)": (1, 4),
