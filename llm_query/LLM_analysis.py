@@ -1,29 +1,35 @@
-import openai
 import pandas as pd
 import json
 import logging
 import time
-from typing import Dict, Any
+import gc
+import os
+from typing import Dict, Any, Optional, Set
 from tqdm import tqdm
 
-def query_openai(prompt: str, client) -> str:
-    """Query GPT-4omini for surgical decision based on input prompt."""
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": (
-                    "You are an expert otolaryngologist. "
-                    "Provide a surgical recommendation in the requested JSON format."
-                )},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.2
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        logging.error(f"OpenAI API error: {e}")
-        return None
+from llm_query.securellm_adapter import query_llm, SecureLLMClient
+
+
+def query_openai(prompt: str, client=None) -> str:
+    """
+    Query the LLM for surgical decision based on input prompt.
+
+    This function now uses SecureLLM instead of direct OpenAI calls.
+    The client parameter is kept for backward compatibility but is ignored.
+
+    Args:
+        prompt: The prompt to send to the LLM.
+        client: Deprecated. Kept for backward compatibility.
+
+    Returns:
+        The LLM response content or None on error.
+    """
+    return query_llm(
+        prompt=prompt,
+        system_message="You are an expert otolaryngologist. Provide a surgical recommendation in the requested JSON format.",
+        temperature=0.2,
+        max_tokens=2048  # Increased to avoid truncation
+    )
 
 def generate_prompt(case_id: str, progress_text: str, radiology_text: str) -> str:
     """Generates a structured prompt for the LLM."""
@@ -53,7 +59,13 @@ def generate_prompt(case_id: str, progress_text: str, radiology_text: str) -> st
     return prompt
 
 def parse_llm_response(response: str) -> Dict[str, Any]:
-    """Parse LLM response and extract decision, confidence, and reasoning."""
+    """Parse LLM response and extract decision, confidence, and reasoning.
+
+    Handles both complete and truncated JSON responses by attempting
+    regex extraction as a fallback.
+    """
+    import re
+
     default_response = {
         'decision': None,
         'confidence': None,
@@ -63,37 +75,110 @@ def parse_llm_response(response: str) -> Dict[str, Any]:
     if not response:
         return default_response
 
+    # Clean up the response
+    response = response.strip()
+    if response.startswith('```json'):
+        response = response.replace('```json', '').replace('```', '').strip()
+    elif response.startswith('```'):
+        response = response.replace('```', '').strip()
+
+    # Try standard JSON parsing first
     try:
-        # Search JSON in the response
-        response = response.strip()
-        if response.startswith('```json'):
-            response = response.replace('```json', '').replace('```', '').strip()
-        elif response.startswith('```'):
-            response = response.replace('```', '').strip()
-
         parsed = json.loads(response)
-
         return {
             'decision': parsed.get('decision'),
             'confidence': parsed.get('confidence'),
             'reasoning': parsed.get('reasoning', 'No reasoning provided')
         }
-    except json.JSONDecodeError as e:
-        logging.error(f"JSON parsing error: {e}")
-        logging.error(f"Response was: {response}")
-        return default_response
-    except Exception as e:
-        logging.error(f"Unexpected error parsing response: {e}")
-        return default_response
+    except json.JSONDecodeError:
+        pass  # Fall through to regex extraction
 
-def process_llm_cases(llm_df: pd.DataFrame, api_key: str, delay_seconds: float = 0.2) -> pd.DataFrame:
+    # Fallback: extract values using regex for truncated/malformed JSON
+    result = default_response.copy()
+
+    # Extract decision
+    decision_match = re.search(r'"decision"\s*:\s*"(Yes|No)"', response, re.IGNORECASE)
+    if decision_match:
+        result['decision'] = decision_match.group(1).capitalize()
+
+    # Extract confidence
+    confidence_match = re.search(r'"confidence"\s*:\s*(\d+)', response)
+    if confidence_match:
+        result['confidence'] = int(confidence_match.group(1))
+
+    # Extract reasoning
+    reasoning_match = re.search(r'"reasoning"\s*:\s*"([^"]*)"', response)
+    if reasoning_match:
+        result['reasoning'] = reasoning_match.group(1)
+    elif result['decision']:
+        result['reasoning'] = 'Response was truncated'
+
+    # Log if we had to use fallback
+    if result['decision'] or result['confidence']:
+        logging.warning(f"Used regex fallback to parse truncated response")
+    else:
+        logging.error(f"JSON parsing error - could not extract any values")
+        logging.error(f"Response was: {response[:200]}...")
+
+    return result
+
+def _load_processed_case_ids(output_file: Optional[str]) -> Set[str]:
+    """Load already processed case IDs from existing output file."""
+    if not output_file or not os.path.exists(output_file):
+        return set()
+
+    try:
+        existing_df = pd.read_csv(output_file)
+        if 'llm_caseID' in existing_df.columns:
+            # Only count cases that have a decision (successfully processed)
+            processed = existing_df[existing_df['decision'].notna()]['llm_caseID'].astype(str).tolist()
+            return set(processed)
+    except Exception as e:
+        logging.warning(f"Could not read existing output file: {e}")
+
+    return set()
+
+
+def _flush_results_to_csv(
+    results: list,
+    output_file: str,
+    write_header: bool
+) -> None:
+    """Flush batch results to CSV file and free memory."""
+    if not results:
+        return
+
+    batch_df = pd.DataFrame(results)
+    batch_df.to_csv(
+        output_file,
+        mode='a' if not write_header else 'w',
+        header=write_header,
+        index=False
+    )
+
+    # Clear the list and force garbage collection
+    results.clear()
+    gc.collect()
+
+
+def process_llm_cases(
+    llm_df: pd.DataFrame,
+    api_key: str = None,
+    delay_seconds: float = 0.2,
+    output_file: Optional[str] = None,
+    flush_interval: int = 10,
+    resume: bool = True
+) -> pd.DataFrame:
     """
-    Process a clean LLM DataFrame through OpenAI API.
+    Process a clean LLM DataFrame through SecureLLM API with incremental saving.
 
     Args:
         llm_df: DataFrame with columns 'llm_caseID', 'formatted_progress_text', 'formatted_radiology_text'
-        api_key: OpenAI API key (hardcoded)
+        api_key: Deprecated. Kept for backward compatibility. SecureLLM uses VAULT_SECRET_KEY.
         delay_seconds: Delay between API calls to avoid rate limiting
+        output_file: Path to output CSV file for incremental saving
+        flush_interval: Number of cases to process before flushing to disk
+        resume: If True, skip cases already in output_file
 
     Returns:
         DataFrame with additional columns: 'decision', 'confidence', 'reasoning', 'api_response'
@@ -102,26 +187,55 @@ def process_llm_cases(llm_df: pd.DataFrame, api_key: str, delay_seconds: float =
     # Setup logging
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-    # Initialize OpenAI client
-    client = openai.OpenAI(api_key=api_key)
-    logging.info("OpenAI client initialized successfully")
+    # Initialize SecureLLM client
+    client = SecureLLMClient()
+    logging.info("SecureLLM client initialized successfully")
 
-    # Create a copy of the dataframe
-    result_df = llm_df.copy()
+    # Load already processed case IDs if resuming
+    processed_ids: Set[str] = set()
+    write_header = True
 
-    # Initialize new columns
-    result_df['decision'] = None
-    result_df['confidence'] = None
-    result_df['reasoning'] = None
-    result_df['api_response'] = None  # Store raw response for debugging
+    if resume and output_file:
+        processed_ids = _load_processed_case_ids(output_file)
+        if processed_ids:
+            logging.info(f"Resuming: {len(processed_ids)} cases already processed, will skip them")
+            write_header = False  # Append to existing file
 
-    total_rows = len(result_df)
+    # Filter out already processed cases
+    if processed_ids:
+        pending_df = llm_df[~llm_df['llm_caseID'].astype(str).isin(processed_ids)].copy()
+        logging.info(f"Remaining cases to process: {len(pending_df)}")
+    else:
+        pending_df = llm_df.copy()
+
+    total_rows = len(pending_df)
+    if total_rows == 0:
+        logging.info("All cases already processed!")
+        if output_file and os.path.exists(output_file):
+            return pd.read_csv(output_file)
+        return llm_df
+
     logging.info(f"Processing {total_rows} cases...")
     start_time = time.time()
 
-    for idx, row in tqdm(result_df.iterrows(), total=total_rows, desc="Processing cases"):
+    # Batch results for incremental saving
+    batch_results = []
+    all_results = []  # Keep track if no output file
+    processed_count = 0
+
+    for idx, (_, row) in enumerate(tqdm(pending_df.iterrows(), total=total_rows, desc="Processing cases")):
+        case_id = row['llm_caseID']
+        result = {
+            'llm_caseID': case_id,
+            'formatted_progress_text': row['formatted_progress_text'],
+            'formatted_radiology_text': row['formatted_radiology_text'],
+            'decision': None,
+            'confidence': None,
+            'reasoning': None,
+            'api_response': None
+        }
+
         try:
-            case_id = row['llm_caseID']
             logging.info(f"Processing case {idx + 1}/{total_rows}: Case ID {case_id}")
 
             # Generate prompt using the formatted text columns
@@ -131,51 +245,98 @@ def process_llm_cases(llm_df: pd.DataFrame, api_key: str, delay_seconds: float =
                 radiology_text=row['formatted_radiology_text']
             )
 
-            # Query OpenAI
-            response = query_openai(prompt, client)
-            result_df.at[idx, 'api_response'] = response
+            # Retry loop for failed responses or failed decision extraction
+            max_attempts = 5
+            for attempt in range(1, max_attempts + 1):
+                # Query LLM
+                response = query_openai(prompt, client)
+                result['api_response'] = response
 
-            if response:
-                # Parse response
-                parsed = parse_llm_response(response)
-                result_df.at[idx, 'decision'] = parsed['decision']
-                result_df.at[idx, 'confidence'] = parsed['confidence']
-                result_df.at[idx, 'reasoning'] = parsed['reasoning']
+                if response:
+                    # Parse response
+                    parsed = parse_llm_response(response)
+                    result['decision'] = parsed['decision']
+                    result['confidence'] = parsed['confidence']
+                    result['reasoning'] = parsed['reasoning']
 
-                logging.info(f"✓ Case {case_id}: {parsed['decision']} (confidence: {parsed['confidence']})")
+                    # Success if we got a decision
+                    if parsed['decision'] is not None:
+                        logging.info(f"✓ Case {case_id}: {parsed['decision']} (confidence: {parsed['confidence']})")
+                        break
+                    else:
+                        logging.warning(f"✗ Attempt {attempt}/{max_attempts}: Could not extract decision for case {case_id}")
+                else:
+                    logging.warning(f"✗ Attempt {attempt}/{max_attempts}: No response for case {case_id}")
+
+                # Retry delay (increasing backoff)
+                if attempt < max_attempts:
+                    retry_delay = 2 * attempt
+                    logging.info(f"Retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
             else:
-                logging.warning(f"✗ No response for case {case_id}")
-
-            # Add delay to avoid rate limiting
-            if delay_seconds > 0:
-                time.sleep(delay_seconds)
-
-            # Progress updates every 100 cases
-            if (idx + 1) % 100 == 0:
-                elapsed = time.time() - start_time
-                rate = (idx + 1) / elapsed * 60  # cases per minute
-                remaining = total_rows - (idx + 1)
-                eta_minutes = remaining / (rate / 60) if rate > 0 else 0
-                print(f"Processed {idx + 1}/{total_rows} cases. Rate: {rate:.1f}/min, ETA: {eta_minutes:.1f}min")
-
+                # All attempts exhausted
+                logging.error(f"✗ Failed to get valid response for case {case_id} after {max_attempts} attempts")
 
         except Exception as e:
             logging.error(f"Error processing case {case_id}: {e}")
-            result_df.at[idx, 'reasoning'] = f"Error: {str(e)}"
+            result['reasoning'] = f"Error: {str(e)}"
+
+        # Add to batch
+        batch_results.append(result)
+        if not output_file:
+            all_results.append(result)
+        processed_count += 1
+
+        # Flush to disk periodically
+        if output_file and len(batch_results) >= flush_interval:
+            _flush_results_to_csv(batch_results, output_file, write_header)
+            write_header = False  # Only write header once
+            logging.info(f"Flushed {flush_interval} results to {output_file}")
+
+        # Add delay to avoid rate limiting
+        if delay_seconds > 0:
+            time.sleep(delay_seconds)
+
+        # Progress updates every 100 cases
+        if (idx + 1) % 100 == 0:
+            elapsed = time.time() - start_time
+            rate = (idx + 1) / elapsed * 60  # cases per minute
+            remaining = total_rows - (idx + 1)
+            eta_minutes = remaining / (rate / 60) if rate > 0 else 0
+            print(f"Processed {idx + 1}/{total_rows} cases. Rate: {rate:.1f}/min, ETA: {eta_minutes:.1f}min")
+
+    # Flush remaining results
+    if output_file and batch_results:
+        _flush_results_to_csv(batch_results, output_file, write_header)
+        logging.info(f"Flushed final {len(batch_results)} results to {output_file}")
 
     elapsed = time.time() - start_time
-    final_rate = total_rows / elapsed * 60
-    logging.info(f"Processing complete! {total_rows} cases in {elapsed:.1f}s ({final_rate:.1f} cases/min)")
-    return result_df
+    final_rate = processed_count / elapsed * 60 if elapsed > 0 else 0
+    logging.info(f"Processing complete! {processed_count} cases in {elapsed:.1f}s ({final_rate:.1f} cases/min)")
+
+    # Return results
+    if output_file and os.path.exists(output_file):
+        return pd.read_csv(output_file)
+
+    return pd.DataFrame(all_results)
 
 
-def run_llm_analysis(llm_df, api_key):
+def run_llm_analysis(
+    llm_df,
+    api_key: str = None,
+    output_file: Optional[str] = None,
+    flush_interval: int = 10,
+    resume: bool = True
+):
     """
     Main function to run the LLM analysis on your DataFrame.
 
     Args:
         llm_df: DataFrame with columns 'llm_caseID', 'formatted_progress_text', 'formatted_radiology_text'
-        api_key: Your OpenAI API key
+        api_key: Deprecated. Kept for backward compatibility. SecureLLM uses VAULT_SECRET_KEY.
+        output_file: Path to output CSV file for incremental saving
+        flush_interval: Number of cases to process before flushing to disk (default: 10)
+        resume: If True, skip cases already in output_file (default: True)
 
     Returns:
         DataFrame with LLM analysis results
@@ -183,9 +344,18 @@ def run_llm_analysis(llm_df, api_key):
 
     print(f"Starting analysis of {len(llm_df)} cases...")
     print(f"DataFrame columns: {list(llm_df.columns)}")
+    if output_file:
+        print(f"Results will be saved incrementally to: {output_file}")
+        print(f"Flush interval: every {flush_interval} cases")
 
     # Process the cases
-    results_df = process_llm_cases(llm_df, api_key, delay_seconds=0.2)
+    results_df = process_llm_cases(
+        llm_df,
+        delay_seconds=0.2,
+        output_file=output_file,
+        flush_interval=flush_interval,
+        resume=resume
+    )
 
     # Show summary
     total_cases = len(results_df)
